@@ -1,0 +1,21 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Chain data
+/data/
+/bin/
+/keystore/
+
+# Secrets
+*.key
+*.pem
+password.txt
+.env
+.env.*
+
+# Go
+vendor/
+*.test
+*.out
