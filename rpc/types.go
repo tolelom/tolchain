@@ -32,6 +32,7 @@ const (
 	CodeMethodNotFound = -32601
 	CodeInvalidParams  = -32602
 	CodeInternalError  = -32603
+	CodeUnauthorized   = -32000
 )
 
 func errResponse(id any, code int, msg string) Response {

@@ -3,12 +3,14 @@
 package network
 
 import (
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"sync"
+	"time"
 )
 
 // MsgType labels a network message.
@@ -44,8 +46,15 @@ func NewPeer(id, addr string, conn net.Conn) *Peer {
 }
 
 // Connect dials the remote address and returns a connected Peer.
-func Connect(id, addr string) (*Peer, error) {
-	conn, err := net.Dial("tcp", addr)
+// If tlsCfg is non-nil the connection is established over TLS.
+func Connect(id, addr string, tlsCfg *tls.Config) (*Peer, error) {
+	var conn net.Conn
+	var err error
+	if tlsCfg != nil {
+		conn, err = tls.Dial("tcp", addr, tlsCfg)
+	} else {
+		conn, err = net.Dial("tcp", addr)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("connect to %s: %w", addr, err)
 	}
@@ -74,7 +83,9 @@ func (p *Peer) Send(msg Message) error {
 }
 
 // Receive reads the next length-prefixed JSON message.
+// A 30-second read deadline prevents a stalled peer from blocking indefinitely.
 func (p *Peer) Receive() (Message, error) {
+	_ = p.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	var header [4]byte
 	if _, err := io.ReadFull(p.conn, header[:]); err != nil {
 		return Message{}, err

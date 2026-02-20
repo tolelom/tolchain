@@ -1,6 +1,7 @@
 package network
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -14,11 +15,16 @@ import (
 // MessageHandler is called for each received message.
 type MessageHandler func(peer *Peer, msg Message)
 
+// DefaultMaxPeers is the default limit on simultaneous peer connections.
+const DefaultMaxPeers = 50
+
 // Node listens for incoming peers and manages outgoing connections.
 type Node struct {
 	nodeID     string
 	listenAddr string
 	mempool    *core.Mempool
+	tlsConfig  *tls.Config // nil → plain TCP
+	maxPeers   int
 
 	mu       sync.RWMutex
 	peers    map[string]*Peer
@@ -29,11 +35,14 @@ type Node struct {
 }
 
 // NewNode creates a Node that will listen on listenAddr.
-func NewNode(nodeID, listenAddr string, mempool *core.Mempool) *Node {
+// If tlsCfg is non-nil the listener and outgoing connections use TLS.
+func NewNode(nodeID, listenAddr string, mempool *core.Mempool, tlsCfg *tls.Config) *Node {
 	n := &Node{
 		nodeID:     nodeID,
 		listenAddr: listenAddr,
 		mempool:    mempool,
+		tlsConfig:  tlsCfg,
+		maxPeers:   DefaultMaxPeers,
 		peers:      make(map[string]*Peer),
 		handlers:   make(map[MsgType]MessageHandler),
 		stopCh:     make(chan struct{}),
@@ -52,7 +61,13 @@ func (n *Node) Handle(typ MsgType, h MessageHandler) {
 
 // Start begins accepting connections.
 func (n *Node) Start() error {
-	ln, err := net.Listen("tcp", n.listenAddr)
+	var ln net.Listener
+	var err error
+	if n.tlsConfig != nil {
+		ln, err = tls.Listen("tcp", n.listenAddr, n.tlsConfig)
+	} else {
+		ln, err = net.Listen("tcp", n.listenAddr)
+	}
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", n.listenAddr, err)
 	}
@@ -76,7 +91,7 @@ func (n *Node) Stop() {
 
 // AddPeer dials addr and registers the peer.
 func (n *Node) AddPeer(id, addr string) error {
-	peer, err := Connect(id, addr)
+	peer, err := Connect(id, addr, n.tlsConfig)
 	if err != nil {
 		return err
 	}
@@ -89,6 +104,13 @@ func (n *Node) AddPeer(id, addr string) error {
 	hello, _ := json.Marshal(map[string]string{"node_id": n.nodeID})
 	_ = peer.Send(Message{Type: MsgHello, Payload: hello})
 	return nil
+}
+
+// Peer returns the connected peer with the given id, or nil if not found.
+func (n *Node) Peer(id string) *Peer {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.peers[id]
 }
 
 // Broadcast sends msg to all connected peers.
@@ -136,6 +158,14 @@ func (n *Node) acceptLoop() {
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
+		}
+		n.mu.RLock()
+		peerCount := len(n.peers)
+		n.mu.RUnlock()
+		if peerCount >= n.maxPeers {
+			log.Printf("[network] max peers (%d) reached, rejecting %s", n.maxPeers, conn.RemoteAddr())
+			conn.Close()
+			continue
 		}
 		peer := NewPeer(conn.RemoteAddr().String(), conn.RemoteAddr().String(), conn)
 		n.mu.Lock()
