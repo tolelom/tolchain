@@ -22,7 +22,7 @@ func newTestRPCHandler(t *testing.T) *rpc.Handler {
 	mp := core.NewMempool()
 	emitter := events.NewEmitter()
 	idx := indexer.New(db, emitter)
-	return rpc.NewHandler(bc, mp, state, idx)
+	return rpc.NewHandler(bc, mp, state, idx, "test-chain")
 }
 
 func dispatch(handler *rpc.Handler, method string, params any) rpc.Response {

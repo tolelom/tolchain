@@ -12,12 +12,24 @@ import (
 	"github.com/tolelom/tolchain/crypto"
 )
 
-const (
-	prefixAccount  = "acct:"
-	prefixAsset    = "asset:"
-	prefixTemplate = "tmpl:"
-	prefixSession  = "sess:"
-	prefixListing  = "list:"
+// registerPrefix records a state-key prefix into statePrefixes so that
+// ComputeRoot() always covers it.  All prefix constants must be declared
+// via this function; manually editing statePrefixes is not required.
+func registerPrefix(p string) string {
+	statePrefixes = append(statePrefixes, p)
+	return p
+}
+
+// statePrefixes is populated automatically by registerPrefix() below.
+// ComputeRoot() iterates these prefixes to build the full world-state view.
+var statePrefixes []string
+
+var (
+	prefixAccount  = registerPrefix("acct:")
+	prefixAsset    = registerPrefix("asset:")
+	prefixTemplate = registerPrefix("tmpl:")
+	prefixSession  = registerPrefix("sess:")
+	prefixListing  = registerPrefix("list:")
 )
 
 type stateSnapshot struct {
@@ -231,16 +243,6 @@ func (s *StateDB) RevertToSnapshot(id int) error {
 	s.deleted = deleted
 	s.snapshots = s.snapshots[:id]
 	return nil
-}
-
-// statePrefixes enumerates every key namespace that belongs to the world
-// state. This slice must be updated whenever a new state category is added.
-var statePrefixes = []string{
-	prefixAccount,
-	prefixAsset,
-	prefixTemplate,
-	prefixSession,
-	prefixListing,
 }
 
 // ComputeRoot returns the deterministic hash of the complete world state.

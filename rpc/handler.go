@@ -14,11 +14,12 @@ type Handler struct {
 	mempool *core.Mempool
 	state   core.State
 	indexer *indexer.Indexer
+	chainID string // expected chain_id; used to reject cross-chain replay transactions
 }
 
 // NewHandler creates an RPC Handler.
-func NewHandler(bc *core.Blockchain, mempool *core.Mempool, state core.State, idx *indexer.Indexer) *Handler {
-	return &Handler{bc: bc, mempool: mempool, state: state, indexer: idx}
+func NewHandler(bc *core.Blockchain, mempool *core.Mempool, state core.State, idx *indexer.Indexer, chainID string) *Handler {
+	return &Handler{bc: bc, mempool: mempool, state: state, indexer: idx, chainID: chainID}
 }
 
 // Dispatch routes an RPC request to the correct method.
@@ -157,6 +158,12 @@ func (h *Handler) sendTx(req Request) Response {
 	var tx core.Transaction
 	if err := json.Unmarshal(req.Params, &tx); err != nil {
 		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	}
+	// Reject transactions destined for a different network to prevent
+	// cross-chain replay attacks.
+	if tx.ChainID != h.chainID {
+		return errResponse(req.ID, CodeInvalidParams,
+			fmt.Sprintf("chain ID mismatch: got %q want %q", tx.ChainID, h.chainID))
 	}
 	// Recompute the ID server-side; do not trust the client-provided value.
 	tx.ID = tx.Hash()

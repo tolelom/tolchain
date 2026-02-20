@@ -122,7 +122,7 @@ func main() {
 
 	// ---- RPC ----
 	rpcAddr := fmt.Sprintf(":%d", cfg.RPCPort)
-	rpcHandler := rpc.NewHandler(bc, mempool, state, idx)
+	rpcHandler := rpc.NewHandler(bc, mempool, state, idx, cfg.Genesis.ChainID)
 	rpcServer := rpc.NewServer(rpcAddr, rpcHandler)
 	if err := rpcServer.Start(); err != nil {
 		log.Fatalf("rpc start: %v", err)

@@ -34,7 +34,7 @@ func TestTokenTransfer(t *testing.T) {
 
 	_ = state.SetAccount(&core.Account{Address: sender.PubKey(), Balance: 1000})
 
-	tx, err := sender.Transfer(receiver.PubKey(), 300, 0, 0)
+	tx, err := sender.Transfer("test-chain", receiver.PubKey(), 300, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestMintAsset(t *testing.T) {
 	block := core.NewBlock(1, "0000", creator.PubKey(), nil)
 
 	// Register template (nonce=0)
-	regTx, err := creator.NewTx(core.TxRegisterTemplate, 0, 0, core.RegisterTemplatePayload{
+	regTx, err := creator.NewTx("test-chain", core.TxRegisterTemplate, 0, 0, core.RegisterTemplatePayload{
 		ID:        "sword-template",
 		Name:      "Sword",
 		Tradeable: true,
@@ -80,7 +80,7 @@ func TestMintAsset(t *testing.T) {
 	}
 
 	// Mint asset (nonce=1)
-	mintTx, err := creator.NewTx(core.TxMintAsset, 1, 0, core.MintAssetPayload{
+	mintTx, err := creator.NewTx("test-chain", core.TxMintAsset, 1, 0, core.MintAssetPayload{
 		TemplateID: "sword-template",
 		Owner:      creator.PubKey(),
 		Properties: map[string]any{"attack": 50},
@@ -120,7 +120,7 @@ func TestNonceReplay(t *testing.T) {
 
 	block := core.NewBlock(1, "0000", w.PubKey(), nil)
 
-	tx1, _ := w.Transfer("aabb", 1, 0, 0)
+	tx1, _ := w.Transfer("test-chain", "aabb", 1, 0, 0)
 	if err := exec.ExecuteTx(block, tx1); err != nil {
 		t.Fatalf("first tx: %v", err)
 	}

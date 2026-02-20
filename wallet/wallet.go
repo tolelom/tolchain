@@ -40,9 +40,10 @@ func (w *Wallet) Address() string {
 	return w.pub.Address()
 }
 
-// NewTx creates a signed transaction. nonce should match the account's current nonce.
-func (w *Wallet) NewTx(typ core.TxType, nonce, fee uint64, payload any) (*core.Transaction, error) {
-	tx, err := core.NewTransaction(typ, w.pub.Hex(), nonce, fee, payload)
+// NewTx creates a signed transaction. chainID must match the target network.
+// nonce should match the account's current nonce.
+func (w *Wallet) NewTx(chainID string, typ core.TxType, nonce, fee uint64, payload any) (*core.Transaction, error) {
+	tx, err := core.NewTransaction(chainID, typ, w.pub.Hex(), nonce, fee, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -51,8 +52,8 @@ func (w *Wallet) NewTx(typ core.TxType, nonce, fee uint64, payload any) (*core.T
 }
 
 // Transfer creates a signed transfer transaction.
-func (w *Wallet) Transfer(to string, amount, nonce, fee uint64) (*core.Transaction, error) {
-	return w.NewTx(core.TxTransfer, nonce, fee, core.TransferPayload{
+func (w *Wallet) Transfer(chainID, to string, amount, nonce, fee uint64) (*core.Transaction, error) {
+	return w.NewTx(chainID, core.TxTransfer, nonce, fee, core.TransferPayload{
 		To:     to,
 		Amount: amount,
 	})
