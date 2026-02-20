@@ -13,6 +13,7 @@ import (
 	"os"
 
 	"github.com/tolelom/tolchain/crypto"
+	"golang.org/x/crypto/pbkdf2"
 )
 
 type keystoreFile struct {
@@ -98,8 +99,5 @@ func LoadKey(path, password string) (crypto.PrivateKey, error) {
 }
 
 func deriveKey(password string, salt []byte) []byte {
-	h := sha256.New()
-	h.Write([]byte(password))
-	h.Write(salt)
-	return h.Sum(nil)
+	return pbkdf2.Key([]byte(password), salt, 100_000, 32, sha256.New)
 }

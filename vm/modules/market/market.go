@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/crypto"
@@ -105,6 +106,9 @@ func handleBuyMarket(ctx *vm.Context, payload json.RawMessage) error {
 	seller, err := ctx.State.GetAccount(listing.Seller)
 	if err != nil {
 		return err
+	}
+	if seller.Balance > math.MaxUint64-listing.Price {
+		return fmt.Errorf("seller balance overflow")
 	}
 	seller.Balance += listing.Price
 	if err := ctx.State.SetAccount(seller); err != nil {

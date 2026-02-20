@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/events"
@@ -108,7 +109,11 @@ func handleSessionResult(ctx *vm.Context, payload json.RawMessage) error {
 
 	// Validate total rewards do not exceed total locked stakes (no token creation).
 	// Each addition is checked for overflow before proceeding.
-	totalStakes := sess.Stakes * uint64(len(sess.Players))
+	nPlayers := uint64(len(sess.Players))
+	if sess.Stakes > 0 && nPlayers > math.MaxUint64/sess.Stakes {
+		return fmt.Errorf("total stakes overflow")
+	}
+	totalStakes := sess.Stakes * nPlayers
 	var totalRewards uint64
 	for _, reward := range p.Outcome {
 		if reward > totalStakes-totalRewards {
@@ -122,6 +127,9 @@ func handleSessionResult(ctx *vm.Context, payload json.RawMessage) error {
 		acc, err := ctx.State.GetAccount(pubkey)
 		if err != nil {
 			return fmt.Errorf("outcome account %q: %w", pubkey, err)
+		}
+		if acc.Balance > math.MaxUint64-reward {
+			return fmt.Errorf("reward overflow for player %q", pubkey)
 		}
 		acc.Balance += reward
 		if err := ctx.State.SetAccount(acc); err != nil {
