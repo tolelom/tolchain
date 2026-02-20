@@ -73,7 +73,9 @@ func (tx *Transaction) Sign(priv crypto.PrivateKey) {
 	tx.ID = hash
 }
 
-// Verify checks the signature and that From is a valid public key.
+// Verify checks the signature, that From is a valid public key, and that
+// tx.ID matches the recomputed hash. This prevents a transaction whose ID
+// was tampered with from being accepted into the mempool or a block.
 func (tx *Transaction) Verify() error {
 	if tx.From == "" {
 		return errors.New("missing from field")
@@ -82,7 +84,11 @@ func (tx *Transaction) Verify() error {
 	if err != nil {
 		return fmt.Errorf("invalid from (must be ed25519 pubkey hex): %w", err)
 	}
-	return crypto.Verify(pub, []byte(tx.Hash()), tx.Signature)
+	hash := tx.Hash()
+	if tx.ID != hash {
+		return fmt.Errorf("tx ID mismatch: declared %s computed %s", tx.ID, hash)
+	}
+	return crypto.Verify(pub, []byte(hash), tx.Signature)
 }
 
 // NewTransaction creates an unsigned transaction with the current timestamp.

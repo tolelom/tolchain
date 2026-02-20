@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/tolelom/tolchain/crypto"
@@ -43,9 +45,26 @@ func (b *Block) Sign(priv crypto.PrivateKey) {
 	b.Signature = crypto.Sign(priv, []byte(b.Hash))
 }
 
-// Verify checks the block signature against the given public key.
+// Verify checks that b.Hash matches the recomputed header hash and that the
+// signature is valid. This prevents accepting blocks whose header was tampered
+// with after signing.
 func (b *Block) Verify(pub crypto.PublicKey) error {
+	if computed := b.ComputeHash(); b.Hash != computed {
+		return fmt.Errorf("block hash mismatch: stored %s computed %s", b.Hash, computed)
+	}
 	return crypto.Verify(pub, []byte(b.Hash), b.Signature)
+}
+
+// VerifyIntegrity checks the structural integrity of a block independently of
+// the proposer signature: hash consistency and TxRoot correctness.
+func (b *Block) VerifyIntegrity() error {
+	if computed := b.ComputeHash(); b.Hash != computed {
+		return fmt.Errorf("block hash mismatch: stored %s computed %s", b.Hash, computed)
+	}
+	if txRoot := ComputeTxRoot(b.Transactions); b.Header.TxRoot != txRoot {
+		return errors.New("tx_root mismatch")
+	}
+	return nil
 }
 
 // ComputeTxRoot builds a deterministic root hash from all transaction IDs.
