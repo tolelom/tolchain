@@ -42,9 +42,27 @@ type Syncer struct {
 // local state; without them the node will have blocks but no account/asset state.
 func NewSyncer(node *Node, bc *core.Blockchain, validator BlockValidator, exec BlockExecutor, state core.State) *Syncer {
 	s := &Syncer{node: node, bc: bc, validator: validator, exec: exec, state: state}
+	node.Handle(MsgHello, s.handleHello)
 	node.Handle(MsgGetBlocks, s.handleGetBlocks)
 	node.Handle(MsgBlocks, s.handleBlocks)
 	return s
+}
+
+// handleHello triggers an initial block sync when a peer announces itself.
+func (s *Syncer) handleHello(peer *Peer, _ Message) {
+	fromHeight := s.bc.Height() + 1
+	if err := s.RequestBlocks(peer, fromHeight); err != nil {
+		log.Printf("[sync] failed to request blocks from %s: %v", peer.ID, err)
+	}
+}
+
+// SyncWithPeer requests missing blocks from the given peer.
+// Call this after AddPeer to initiate an outbound sync.
+func (s *Syncer) SyncWithPeer(peer *Peer) {
+	fromHeight := s.bc.Height() + 1
+	if err := s.RequestBlocks(peer, fromHeight); err != nil {
+		log.Printf("[sync] failed to request blocks from %s: %v", peer.ID, err)
+	}
 }
 
 // RequestBlocks asks peer for blocks starting at fromHeight.
@@ -79,7 +97,7 @@ func (s *Syncer) handleGetBlocks(peer *Peer, msg Message) {
 	_ = peer.Send(Message{Type: MsgBlocks, Payload: data})
 }
 
-func (s *Syncer) handleBlocks(_ *Peer, msg Message) {
+func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 	var resp BlocksResponse
 	if err := json.Unmarshal(msg.Payload, &resp); err != nil {
 		return
@@ -102,7 +120,9 @@ func (s *Syncer) handleBlocks(_ *Peer, msg Message) {
 				continue
 			}
 			if err := s.exec.ExecuteBlock(b); err != nil {
-				_ = s.state.RevertToSnapshot(snapID)
+				if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
+					log.Fatalf("[sync] FATAL: block %d revert failed after exec error: %v (exec: %v)", b.Header.Height, revErr, err)
+				}
 				log.Printf("[sync] block %d execution failed: %v", b.Header.Height, err)
 				continue
 			}
@@ -110,7 +130,9 @@ func (s *Syncer) handleBlocks(_ *Peer, msg Message) {
 
 		if err := s.bc.AddBlock(b); err != nil {
 			if s.exec != nil && s.state != nil {
-				_ = s.state.RevertToSnapshot(snapID)
+				if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
+					log.Fatalf("[sync] FATAL: block %d revert failed after add error: %v (add: %v)", b.Header.Height, revErr, err)
+				}
 			}
 			log.Printf("[sync] block %d add failed: %v", b.Header.Height, err)
 			continue
@@ -120,6 +142,14 @@ func (s *Syncer) handleBlocks(_ *Peer, msg Message) {
 			if err := s.state.Commit(); err != nil {
 				log.Fatalf("[sync] FATAL: block %d state commit failed: %v", b.Header.Height, err)
 			}
+		}
+	}
+
+	// If we received a full batch, there may be more blocks — keep requesting.
+	if len(resp.Blocks) >= 50 {
+		nextHeight := s.bc.Height() + 1
+		if err := s.RequestBlocks(peer, nextHeight); err != nil {
+			log.Printf("[sync] follow-up request to %s failed: %v", peer.ID, err)
 		}
 	}
 }
