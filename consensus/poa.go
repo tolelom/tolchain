@@ -89,15 +89,19 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 		return nil, fmt.Errorf("execute block: %w", err)
 	}
 
-	stateRoot, err := p.state.Commit()
-	if err != nil {
-		return nil, fmt.Errorf("commit state: %w", err)
-	}
-	block.Header.StateRoot = stateRoot
+	// Compute root from the write buffer BEFORE flushing so that if AddBlock
+	// fails the state has not yet been persisted and the node stays consistent.
+	block.Header.StateRoot = p.state.ComputeRoot()
 	block.Sign(p.privKey)
 
 	if err := p.bc.AddBlock(block); err != nil {
 		return nil, fmt.Errorf("add block: %w", err)
+	}
+
+	// Flush state only after the block is safely stored.
+	if err := p.state.Commit(); err != nil {
+		log.Fatalf("[consensus] FATAL: block %d stored but state commit failed: %v",
+			block.Header.Height, err)
 	}
 
 	// Emit after Sign() so block.Hash is set correctly.

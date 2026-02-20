@@ -4,9 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
 
-const maxMempoolSize = 10_000
+const (
+	maxMempoolSize = 10_000
+	maxTxAge       = int64(time.Hour)          // reject txs older than 1 hour
+	maxTxFuture    = int64(5 * time.Minute)    // reject txs more than 5 min in the future
+)
 
 // Mempool is a thread-safe pending-transaction pool.
 type Mempool struct {
@@ -21,10 +26,18 @@ func NewMempool() *Mempool {
 }
 
 // Add validates and inserts a transaction. Returns an error if the pool is
-// full, the tx is already present, or the signature is invalid.
+// full, the tx is already present, the signature is invalid, or the timestamp
+// is out of the acceptable window (±1 h / +5 min).
 func (m *Mempool) Add(tx *Transaction) error {
 	if err := tx.Verify(); err != nil {
 		return fmt.Errorf("invalid tx signature: %w", err)
+	}
+	now := time.Now().UnixNano()
+	if now-tx.Timestamp > maxTxAge {
+		return errors.New("transaction expired")
+	}
+	if tx.Timestamp-now > maxTxFuture {
+		return errors.New("transaction timestamp too far in the future")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

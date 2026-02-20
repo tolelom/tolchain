@@ -27,8 +27,8 @@ func CreateGenesisBlock(cfg *Config, state core.State, proposerPriv crypto.Priva
 		}
 	}
 
-	stateRoot, err := state.Commit()
-	if err != nil {
+	stateRoot := state.ComputeRoot()
+	if err := state.Commit(); err != nil {
 		return nil, err
 	}
 
