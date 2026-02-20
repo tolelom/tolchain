@@ -1,6 +1,8 @@
 package core
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"time"
 
@@ -47,15 +49,21 @@ func (b *Block) Verify(pub crypto.PublicKey) error {
 }
 
 // ComputeTxRoot builds a deterministic root hash from all transaction IDs.
+// Each ID is length-prefixed (4-byte big-endian) to prevent boundary ambiguity
+// where different ID sets could otherwise produce the same byte sequence.
 func ComputeTxRoot(txs []*Transaction) string {
 	if len(txs) == 0 {
 		return crypto.Hash([]byte("empty"))
 	}
-	var ids []byte
+	var buf bytes.Buffer
+	var lenBuf [4]byte
 	for _, tx := range txs {
-		ids = append(ids, []byte(tx.ID)...)
+		id := []byte(tx.ID)
+		binary.BigEndian.PutUint32(lenBuf[:], uint32(len(id)))
+		buf.Write(lenBuf[:])
+		buf.Write(id)
 	}
-	return crypto.Hash(ids)
+	return crypto.Hash(buf.Bytes())
 }
 
 // NewBlock creates an unsigned block with the given parameters.

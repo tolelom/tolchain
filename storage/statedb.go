@@ -273,19 +273,19 @@ func (s *StateDB) ComputeRoot() string {
 	return crypto.Hash(buf.Bytes())
 }
 
-// Commit flushes the write buffer to the underlying DB and clears it.
-// Call ComputeRoot() before signing the block, then call Commit() after
-// the block is safely stored to avoid state/chain inconsistency.
+// Commit atomically flushes the write buffer to the underlying DB via a
+// WriteBatch and then clears it. Call ComputeRoot() before signing the block,
+// then call Commit() after the block is safely stored.
 func (s *StateDB) Commit() error {
+	batch := s.db.NewBatch()
 	for k, v := range s.dirty {
-		if err := s.db.Set([]byte(k), v); err != nil {
-			return err
-		}
+		batch.Set([]byte(k), v)
 	}
 	for k := range s.deleted {
-		if err := s.db.Delete([]byte(k)); err != nil {
-			return err
-		}
+		batch.Delete([]byte(k))
+	}
+	if err := batch.Write(); err != nil {
+		return err
 	}
 	s.dirty = make(map[string][]byte)
 	s.deleted = make(map[string]bool)
