@@ -233,42 +233,64 @@ func (s *StateDB) RevertToSnapshot(id int) error {
 	return nil
 }
 
-// ComputeRoot returns the deterministic state root of the current write buffer
-// using length-prefixed SHA-256 encoding. It does NOT flush or modify state,
+// statePrefixes enumerates every key namespace that belongs to the world
+// state. This slice must be updated whenever a new state category is added.
+var statePrefixes = []string{
+	prefixAccount,
+	prefixAsset,
+	prefixTemplate,
+	prefixSession,
+	prefixListing,
+}
+
+// ComputeRoot returns the deterministic hash of the complete world state.
+// It merges all persisted state entries (scanned from DB by the known state
+// prefixes) with the current write buffer, then hashes the sorted key-value
+// pairs using length-prefix encoding.  It does NOT flush or modify state,
 // so it is safe to call before signing a block.
 func (s *StateDB) ComputeRoot() string {
-	seen := make(map[string]bool, len(s.dirty)+len(s.deleted))
-	touched := make([]string, 0, len(s.dirty)+len(s.deleted))
-	for k := range s.dirty {
-		if !seen[k] {
-			touched = append(touched, k)
-			seen[k] = true
+	// Step 1: collect all persisted state entries from DB.
+	merged := make(map[string][]byte)
+	for _, prefix := range statePrefixes {
+		it := s.db.NewIterator([]byte(prefix))
+		for it.Next() {
+			k := string(it.Key())
+			v := make([]byte, len(it.Value()))
+			copy(v, it.Value())
+			merged[k] = v
 		}
+		it.Release()
 	}
-	for k := range s.deleted {
-		if !seen[k] {
-			touched = append(touched, k)
-			seen[k] = true
-		}
-	}
-	sort.Strings(touched)
 
+	// Step 2: apply in-memory write buffer (uncommitted changes this block).
+	for k, v := range s.dirty {
+		merged[k] = v
+	}
+
+	// Step 3: exclude deleted keys.
+	for k := range s.deleted {
+		delete(merged, k)
+	}
+
+	// Step 4: sort keys for determinism.
+	keys := make([]string, 0, len(merged))
+	for k := range merged {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Step 5: length-prefix encode each key-value pair and hash.
 	var buf bytes.Buffer
 	var lenBuf [4]byte
-	for _, k := range touched {
+	for _, k := range keys {
+		v := merged[k]
 		kb := []byte(k)
 		binary.BigEndian.PutUint32(lenBuf[:], uint32(len(kb)))
 		buf.Write(lenBuf[:])
 		buf.Write(kb)
-		if v, ok := s.dirty[k]; ok {
-			binary.BigEndian.PutUint32(lenBuf[:], uint32(len(v)))
-			buf.Write(lenBuf[:])
-			buf.Write(v)
-		} else {
-			// tombstone: 0xFFFFFFFF length signals a deletion
-			binary.BigEndian.PutUint32(lenBuf[:], 0xFFFFFFFF)
-			buf.Write(lenBuf[:])
-		}
+		binary.BigEndian.PutUint32(lenBuf[:], uint32(len(v)))
+		buf.Write(lenBuf[:])
+		buf.Write(v)
 	}
 	return crypto.Hash(buf.Bytes())
 }
