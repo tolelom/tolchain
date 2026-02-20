@@ -233,25 +233,10 @@ func (s *StateDB) RevertToSnapshot(id int) error {
 	return nil
 }
 
-// Commit flushes the write buffer to the underlying DB and returns a
-// deterministic state root (SHA-256 over sorted key-value pairs).
-func (s *StateDB) Commit() (string, error) {
-	// Flush dirty writes
-	for k, v := range s.dirty {
-		if err := s.db.Set([]byte(k), v); err != nil {
-			return "", err
-		}
-	}
-	// Flush deletions
-	for k := range s.deleted {
-		if err := s.db.Delete([]byte(k)); err != nil {
-			return "", err
-		}
-	}
-
-	// Build deterministic state root over all touched keys (writes and deletions).
-	// Length-prefixed encoding prevents key/value boundary ambiguity.
-	// Tombstone marker (0xFFFFFFFF value length) distinguishes deleted from empty.
+// ComputeRoot returns the deterministic state root of the current write buffer
+// using length-prefixed SHA-256 encoding. It does NOT flush or modify state,
+// so it is safe to call before signing a block.
+func (s *StateDB) ComputeRoot() string {
 	seen := make(map[string]bool, len(s.dirty)+len(s.deleted))
 	touched := make([]string, 0, len(s.dirty)+len(s.deleted))
 	for k := range s.dirty {
@@ -285,12 +270,25 @@ func (s *StateDB) Commit() (string, error) {
 			buf.Write(lenBuf[:])
 		}
 	}
-	root := crypto.Hash(buf.Bytes())
+	return crypto.Hash(buf.Bytes())
+}
 
-	// Reset write buffer
+// Commit flushes the write buffer to the underlying DB and clears it.
+// Call ComputeRoot() before signing the block, then call Commit() after
+// the block is safely stored to avoid state/chain inconsistency.
+func (s *StateDB) Commit() error {
+	for k, v := range s.dirty {
+		if err := s.db.Set([]byte(k), v); err != nil {
+			return err
+		}
+	}
+	for k := range s.deleted {
+		if err := s.db.Delete([]byte(k)); err != nil {
+			return err
+		}
+	}
 	s.dirty = make(map[string][]byte)
 	s.deleted = make(map[string]bool)
 	s.snapshots = nil
-
-	return root, nil
+	return nil
 }

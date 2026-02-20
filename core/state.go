@@ -33,10 +33,11 @@ type AssetTemplate struct {
 type Session struct {
 	ID        string            `json:"id"`
 	GameID    string            `json:"game_id"`
-	Players   []string          `json:"players"` // pubkey hexes
-	Stakes    uint64            `json:"stakes"`  // tokens locked per player
-	Status    string            `json:"status"`  // "open" | "closed"
-	Outcome   map[string]uint64 `json:"outcome"` // pubkey hex → reward
+	Creator   string            `json:"creator"`  // pubkey hex of the session opener
+	Players   []string          `json:"players"`  // pubkey hexes
+	Stakes    uint64            `json:"stakes"`   // tokens locked per player
+	Status    string            `json:"status"`   // "open" | "closed"
+	Outcome   map[string]uint64 `json:"outcome"`  // pubkey hex → reward
 	CreatedAt int64             `json:"created_at"`
 	ClosedAt  int64             `json:"closed_at"`
 }
@@ -78,5 +79,10 @@ type State interface {
 	// Snapshot / rollback / commit
 	Snapshot() (int, error)
 	RevertToSnapshot(id int) error
-	Commit() (stateRoot string, err error)
+	// ComputeRoot returns the deterministic state root from the current write
+	// buffer without flushing. Call this before signing a block.
+	ComputeRoot() string
+	// Commit flushes the write buffer to the underlying DB and clears it.
+	// Always call ComputeRoot() first to obtain the root for the block header.
+	Commit() error
 }
