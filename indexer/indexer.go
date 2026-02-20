@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/events"
@@ -51,7 +52,9 @@ func (idx *Indexer) onAssetMinted(ev events.Event) {
 	if owner == "" || assetID == "" {
 		return
 	}
-	_ = idx.addToList(prefixOwnerAssets+owner, assetID)
+	if err := idx.addToList(prefixOwnerAssets+owner, assetID); err != nil {
+		log.Printf("[indexer] mint index write failed (owner=%s asset=%s): %v", owner, assetID, err)
+	}
 }
 
 func (idx *Indexer) onAssetTransferred(ev events.Event) {
@@ -62,9 +65,12 @@ func (idx *Indexer) onAssetTransferred(ev events.Event) {
 		return
 	}
 	if err := idx.removeFromList(prefixOwnerAssets+from, assetID); err != nil {
+		log.Printf("[indexer] transfer remove failed (from=%s asset=%s): %v", from, assetID, err)
 		return
 	}
-	_ = idx.addToList(prefixOwnerAssets+to, assetID)
+	if err := idx.addToList(prefixOwnerAssets+to, assetID); err != nil {
+		log.Printf("[indexer] transfer add failed (to=%s asset=%s): %v", to, assetID, err)
+	}
 }
 
 func (idx *Indexer) onAssetBurned(ev events.Event) {
@@ -73,7 +79,9 @@ func (idx *Indexer) onAssetBurned(ev events.Event) {
 	if owner == "" || assetID == "" {
 		return
 	}
-	_ = idx.removeFromList(prefixOwnerAssets+owner, assetID)
+	if err := idx.removeFromList(prefixOwnerAssets+owner, assetID); err != nil {
+		log.Printf("[indexer] burn remove failed (owner=%s asset=%s): %v", owner, assetID, err)
+	}
 }
 
 func (idx *Indexer) onSessionOpen(ev events.Event) {
@@ -85,7 +93,9 @@ func (idx *Indexer) onSessionOpen(ev events.Event) {
 	for _, p := range players {
 		player, _ := p.(string)
 		if player != "" {
-			_ = idx.addToList(prefixPlayerSession+player, sessionID)
+			if err := idx.addToList(prefixPlayerSession+player, sessionID); err != nil {
+				log.Printf("[indexer] session index write failed (player=%s session=%s): %v", player, sessionID, err)
+			}
 		}
 	}
 }
