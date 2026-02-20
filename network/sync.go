@@ -23,18 +23,25 @@ type BlockValidator interface {
 	ValidateBlock(block *core.Block) error
 }
 
+// BlockExecutor applies all transactions in a block against the state.
+type BlockExecutor interface {
+	ExecuteBlock(block *core.Block) error
+}
+
 // Syncer handles block synchronisation between nodes.
 type Syncer struct {
 	node      *Node
 	bc        *core.Blockchain
 	validator BlockValidator
+	exec      BlockExecutor // may be nil; if set, state is also required
+	state     core.State    // may be nil; used with exec to commit after each block
 }
 
 // NewSyncer creates a Syncer that requests missing blocks from peers.
-// validator may be nil (blocks are accepted without validation), but a non-nil
-// validator (e.g. consensus.PoA) is strongly recommended for production use.
-func NewSyncer(node *Node, bc *core.Blockchain, validator BlockValidator) *Syncer {
-	s := &Syncer{node: node, bc: bc, validator: validator}
+// Pass non-nil exec and state so that synced blocks are fully applied to the
+// local state; without them the node will have blocks but no account/asset state.
+func NewSyncer(node *Node, bc *core.Blockchain, validator BlockValidator, exec BlockExecutor, state core.State) *Syncer {
+	s := &Syncer{node: node, bc: bc, validator: validator, exec: exec, state: state}
 	node.Handle(MsgGetBlocks, s.handleGetBlocks)
 	node.Handle(MsgBlocks, s.handleBlocks)
 	return s
@@ -81,11 +88,38 @@ func (s *Syncer) handleBlocks(_ *Peer, msg Message) {
 		if s.validator != nil {
 			if err := s.validator.ValidateBlock(b); err != nil {
 				log.Printf("[sync] block %d validation failed: %v", b.Header.Height, err)
-				return
+				continue // skip this block, try the rest
 			}
 		}
+
+		// Take a snapshot so we can revert if AddBlock fails.
+		var snapID int
+		if s.exec != nil && s.state != nil {
+			var err error
+			snapID, err = s.state.Snapshot()
+			if err != nil {
+				log.Printf("[sync] block %d snapshot failed: %v", b.Header.Height, err)
+				continue
+			}
+			if err := s.exec.ExecuteBlock(b); err != nil {
+				_ = s.state.RevertToSnapshot(snapID)
+				log.Printf("[sync] block %d execution failed: %v", b.Header.Height, err)
+				continue
+			}
+		}
+
 		if err := s.bc.AddBlock(b); err != nil {
+			if s.exec != nil && s.state != nil {
+				_ = s.state.RevertToSnapshot(snapID)
+			}
 			log.Printf("[sync] block %d add failed: %v", b.Header.Height, err)
+			continue
+		}
+
+		if s.exec != nil && s.state != nil {
+			if err := s.state.Commit(); err != nil {
+				log.Fatalf("[sync] FATAL: block %d state commit failed: %v", b.Header.Height, err)
+			}
 		}
 	}
 }

@@ -113,7 +113,7 @@ func main() {
 	// ---- network ----
 	p2pAddr := fmt.Sprintf(":%d", cfg.P2PPort)
 	node := network.NewNode(cfg.NodeID, p2pAddr, mempool)
-	_ = network.NewSyncer(node, bc, poa)
+	_ = network.NewSyncer(node, bc, poa, exec, state)
 	if err := node.Start(); err != nil {
 		log.Fatalf("p2p start: %v", err)
 	}

@@ -60,7 +60,47 @@ func (m *MemDB) NewIterator(prefix []byte) storage.Iterator {
 	return &memIter{pairs: pairs, idx: -1}
 }
 
+func (m *MemDB) NewBatch() storage.Batch {
+	return &memBatch{db: m}
+}
+
 func (m *MemDB) Close() error { return nil }
+
+// memBatch is an in-memory atomic write buffer for MemDB.
+type memBatch struct {
+	db  *MemDB
+	ops []memBatchOp
+}
+
+type memBatchOp struct {
+	key   string
+	value []byte // nil means delete
+}
+
+func (b *memBatch) Set(key, value []byte) {
+	cp := make([]byte, len(value))
+	copy(cp, value)
+	b.ops = append(b.ops, memBatchOp{string(key), cp})
+}
+
+func (b *memBatch) Delete(key []byte) {
+	b.ops = append(b.ops, memBatchOp{string(key), nil})
+}
+
+func (b *memBatch) Reset() { b.ops = nil }
+
+func (b *memBatch) Write() error {
+	b.db.mu.Lock()
+	defer b.db.mu.Unlock()
+	for _, op := range b.ops {
+		if op.value == nil {
+			delete(b.db.data, op.key)
+		} else {
+			b.db.data[op.key] = op.value
+		}
+	}
+	return nil
+}
 
 type kv struct{ k, v []byte }
 

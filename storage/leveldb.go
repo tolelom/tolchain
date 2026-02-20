@@ -43,9 +43,24 @@ func (l *LevelDB) NewIterator(prefix []byte) Iterator {
 	return l.db.NewIterator(util.BytesPrefix(prefix), nil)
 }
 
+func (l *LevelDB) NewBatch() Batch {
+	return &levelBatch{db: l.db, b: new(leveldb.Batch)}
+}
+
 func (l *LevelDB) Close() error {
 	return l.db.Close()
 }
+
+// levelBatch wraps leveldb.Batch for atomic multi-key writes.
+type levelBatch struct {
+	db *leveldb.DB
+	b  *leveldb.Batch
+}
+
+func (lb *levelBatch) Set(key, value []byte) { lb.b.Put(key, value) }
+func (lb *levelBatch) Delete(key []byte)      { lb.b.Delete(key) }
+func (lb *levelBatch) Reset()                 { lb.b.Reset() }
+func (lb *levelBatch) Write() error           { return lb.db.Write(lb.b, nil) }
 
 // ---- BlockStore implementation ----
 
