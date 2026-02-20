@@ -178,6 +178,15 @@ func (s *MemBlockStore) SetTip(hash string) error {
 	return nil
 }
 
+func (s *MemBlockStore) CommitBlock(block *core.Block) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.blocks[block.Hash] = block
+	s.byH[block.Header.Height] = block.Hash
+	s.tip = block.Hash
+	return nil
+}
+
 // NewStateDB returns a storage.StateDB backed by a fresh MemDB.
 func NewStateDB() *storage.StateDB {
 	return storage.NewStateDB(NewMemDB())

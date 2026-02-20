@@ -19,6 +19,9 @@ type BlockStore interface {
 	// GetTip returns the current tip hash, or ("", nil) for a fresh chain.
 	GetTip() (string, error)
 	SetTip(hash string) error
+	// CommitBlock atomically writes the block, its height index entry, and
+	// updates the tip pointer in a single batch operation.
+	CommitBlock(block *Block) error
 }
 
 // Blockchain manages the canonical chain: stores blocks and tracks the tip.
@@ -56,19 +59,24 @@ func (bc *Blockchain) Init() error {
 	return nil
 }
 
-// AddBlock persists a block and advances the tip.
+// AddBlock validates height continuity and PrevHash linkage, then persists the
+// block and advances the tip.
 func (bc *Blockchain) AddBlock(block *Block) error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
-	if err := bc.store.PutBlock(block); err != nil {
-		return fmt.Errorf("put block: %w", err)
+	// Validate height and PrevHash linkage.
+	if bc.tip != nil {
+		if block.Header.Height != bc.height+1 {
+			return fmt.Errorf("block height %d does not follow tip %d", block.Header.Height, bc.height)
+		}
+		if block.Header.PrevHash != bc.tip.Hash {
+			return fmt.Errorf("prev_hash mismatch: got %s want %s", block.Header.PrevHash, bc.tip.Hash)
+		}
 	}
-	if err := bc.store.PutBlockByHeight(block.Header.Height, block.Hash); err != nil {
-		return fmt.Errorf("put block by height: %w", err)
-	}
-	if err := bc.store.SetTip(block.Hash); err != nil {
-		return fmt.Errorf("set tip: %w", err)
+
+	if err := bc.store.CommitBlock(block); err != nil {
+		return fmt.Errorf("commit block: %w", err)
 	}
 	bc.tip = block
 	bc.height = block.Header.Height

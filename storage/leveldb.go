@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
 	"github.com/tolelom/tolchain/core"
 )
@@ -60,7 +61,9 @@ type levelBatch struct {
 func (lb *levelBatch) Set(key, value []byte) { lb.b.Put(key, value) }
 func (lb *levelBatch) Delete(key []byte)      { lb.b.Delete(key) }
 func (lb *levelBatch) Reset()                 { lb.b.Reset() }
-func (lb *levelBatch) Write() error           { return lb.db.Write(lb.b, nil) }
+func (lb *levelBatch) Write() error {
+	return lb.db.Write(lb.b, &opt.WriteOptions{Sync: true})
+}
 
 // ---- BlockStore implementation ----
 
@@ -121,4 +124,18 @@ func (s *LevelBlockStore) GetTip() (string, error) {
 
 func (s *LevelBlockStore) SetTip(hash string) error {
 	return s.db.Set([]byte("chain:tip"), []byte(hash))
+}
+
+// CommitBlock atomically writes block data, height index, and tip in a single
+// batch so that a crash cannot leave the store in an inconsistent state.
+func (s *LevelBlockStore) CommitBlock(block *core.Block) error {
+	data, err := json.Marshal(block)
+	if err != nil {
+		return err
+	}
+	batch := s.db.NewBatch()
+	batch.Set([]byte("block:"+block.Hash), data)
+	batch.Set([]byte(fmt.Sprintf("height:%d", block.Header.Height)), []byte(block.Hash))
+	batch.Set([]byte("chain:tip"), []byte(block.Hash))
+	return batch.Write()
 }
