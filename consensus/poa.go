@@ -135,8 +135,14 @@ func (p *PoA) ValidateBlock(block *core.Block) error {
 	if err != nil {
 		return fmt.Errorf("invalid proposer pubkey: %w", err)
 	}
+	// Verify() re-computes the header hash and checks the signature,
+	// preventing acceptance of blocks with a tampered header.
 	if err := block.Verify(pub); err != nil {
 		return fmt.Errorf("block signature invalid: %w", err)
+	}
+	// Independently verify TxRoot matches the actual transaction list.
+	if txRoot := core.ComputeTxRoot(block.Transactions); block.Header.TxRoot != txRoot {
+		return fmt.Errorf("tx_root mismatch: got %s want %s", block.Header.TxRoot, txRoot)
 	}
 
 	// Validate previous hash linkage
