@@ -26,9 +26,11 @@ const (
 
 // Transaction is the atomic unit of work on the chain.
 // From holds the sender's full hex-encoded ed25519 public key (64 chars).
+// ChainID prevents replay of this transaction on a different network.
 // Signature covers all fields except Signature itself.
 type Transaction struct {
 	ID        string          `json:"id"`
+	ChainID   string          `json:"chain_id"` // must match the receiving node's chain ID
 	Type      TxType          `json:"type"`
 	From      string          `json:"from"`      // hex-encoded ed25519 public key
 	Nonce     uint64          `json:"nonce"`
@@ -40,6 +42,7 @@ type Transaction struct {
 
 // signingBody holds the fields that are covered by the signature.
 type signingBody struct {
+	ChainID   string          `json:"chain_id"`
 	Type      TxType          `json:"type"`
 	From      string          `json:"from"`
 	Nonce     uint64          `json:"nonce"`
@@ -52,6 +55,7 @@ type signingBody struct {
 // Returns an empty string if marshalling fails (which cannot happen in practice).
 func (tx *Transaction) Hash() string {
 	body := signingBody{
+		ChainID:   tx.ChainID,
 		Type:      tx.Type,
 		From:      tx.From,
 		Nonce:     tx.Nonce,
@@ -92,12 +96,15 @@ func (tx *Transaction) Verify() error {
 }
 
 // NewTransaction creates an unsigned transaction with the current timestamp.
-func NewTransaction(typ TxType, from string, nonce, fee uint64, payload any) (*Transaction, error) {
+// chainID must match the target network (e.g. "tolchain-dev") to prevent
+// cross-chain replay attacks.
+func NewTransaction(chainID string, typ TxType, from string, nonce, fee uint64, payload any) (*Transaction, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal payload: %w", err)
 	}
 	return &Transaction{
+		ChainID:   chainID,
 		Type:      typ,
 		From:      from,
 		Nonce:     nonce,

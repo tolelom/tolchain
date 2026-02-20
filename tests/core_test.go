@@ -51,7 +51,7 @@ func TestTransactionSignVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tx, err := w.NewTx(core.TxTransfer, 0, 0, core.TransferPayload{
+	tx, err := w.NewTx("test-chain", core.TxTransfer, 0, 0, core.TransferPayload{
 		To:     "deadbeef",
 		Amount: 100,
 	})
@@ -95,7 +95,7 @@ func TestMempool(t *testing.T) {
 	mp := core.NewMempool()
 	w, _ := wallet.Generate()
 
-	tx, _ := w.NewTx(core.TxTransfer, 0, 0, core.TransferPayload{To: "aa", Amount: 1})
+	tx, _ := w.NewTx("test-chain", core.TxTransfer, 0, 0, core.TransferPayload{To: "aa", Amount: 1})
 	if err := mp.Add(tx); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
