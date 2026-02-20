@@ -3,6 +3,7 @@ package economy
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/events"
@@ -40,6 +41,9 @@ func handleTransfer(ctx *vm.Context, payload json.RawMessage) error {
 	recipient, err := ctx.State.GetAccount(p.To)
 	if err != nil {
 		return err
+	}
+	if recipient.Balance > math.MaxUint64-p.Amount {
+		return fmt.Errorf("recipient balance overflow")
 	}
 	recipient.Balance += p.Amount
 	if err := ctx.State.SetAccount(recipient); err != nil {

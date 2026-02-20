@@ -1,6 +1,9 @@
 package events
 
-import "sync"
+import (
+	"log"
+	"sync"
+)
 
 // EventType labels what happened.
 type EventType string
@@ -49,11 +52,20 @@ func (e *Emitter) Subscribe(typ EventType, h Handler) {
 }
 
 // Emit delivers ev to all subscribers for ev.Type synchronously.
+// Each handler is guarded by panic recovery so a misbehaving subscriber
+// cannot crash the node or halt block production.
 func (e *Emitter) Emit(ev Event) {
 	e.mu.RLock()
 	handlers := e.handlers[ev.Type]
 	e.mu.RUnlock()
 	for _, h := range handlers {
-		h(ev)
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[events] handler panicked for %s: %v", ev.Type, r)
+				}
+			}()
+			h(ev)
+		}()
 	}
 }

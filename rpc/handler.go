@@ -91,6 +91,9 @@ func (h *Handler) getBalance(req Request) Response {
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return errResponse(req.ID, CodeInvalidParams, err.Error())
 	}
+	if params.Address == "" {
+		return errResponse(req.ID, CodeInvalidParams, "address is required")
+	}
 	acc, err := h.state.GetAccount(params.Address)
 	if err != nil {
 		return errResponse(req.ID, CodeInternalError, err.Error())
@@ -104,6 +107,9 @@ func (h *Handler) getAsset(req Request) Response {
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	}
+	if params.ID == "" {
+		return errResponse(req.ID, CodeInvalidParams, "id is required")
 	}
 	asset, err := h.state.GetAsset(params.ID)
 	if err != nil {
@@ -119,6 +125,9 @@ func (h *Handler) getSession(req Request) Response {
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return errResponse(req.ID, CodeInvalidParams, err.Error())
 	}
+	if params.ID == "" {
+		return errResponse(req.ID, CodeInvalidParams, "id is required")
+	}
 	sess, err := h.state.GetSession(params.ID)
 	if err != nil {
 		return errResponse(req.ID, CodeInternalError, err.Error())
@@ -133,6 +142,9 @@ func (h *Handler) getListing(req Request) Response {
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return errResponse(req.ID, CodeInvalidParams, err.Error())
 	}
+	if params.ID == "" {
+		return errResponse(req.ID, CodeInvalidParams, "id is required")
+	}
 	listing, err := h.state.GetListing(params.ID)
 	if err != nil {
 		return errResponse(req.ID, CodeInternalError, err.Error())
@@ -146,6 +158,9 @@ func (h *Handler) getAssetsByOwner(req Request) Response {
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	}
+	if params.Owner == "" {
+		return errResponse(req.ID, CodeInvalidParams, "owner is required")
 	}
 	ids, err := h.indexer.GetAssetsByOwner(params.Owner)
 	if err != nil {
