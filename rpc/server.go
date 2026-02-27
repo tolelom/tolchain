@@ -15,6 +15,7 @@ type Server struct {
 	addr      string
 	authToken string // empty → no auth required
 	srv       *http.Server
+	ln        net.Listener
 }
 
 // NewServer creates a Server on addr. If authToken is non-empty, every
@@ -41,11 +42,20 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
+	s.ln = ln
 	go func() {
 		if err := s.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Printf("[rpc] server error: %v", err)
 		}
 	}()
+	return nil
+}
+
+// Addr returns the listener's address. Useful when started on ":0".
+func (s *Server) Addr() net.Addr {
+	if s.ln != nil {
+		return s.ln.Addr()
+	}
 	return nil
 }
 
