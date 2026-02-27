@@ -60,13 +60,17 @@ func (bc *Blockchain) Init() error {
 }
 
 // AddBlock validates height continuity and PrevHash linkage, then persists the
-// block and advances the tip.
+// block and advances the tip. Only the next sequential block is accepted;
+// blocks at the current or lower height are rejected to prevent forks.
 func (bc *Blockchain) AddBlock(block *Block) error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
-	// Validate height and PrevHash linkage.
+	// (F) Reject blocks at or below the current height (fork prevention).
 	if bc.tip != nil {
+		if block.Header.Height <= bc.height {
+			return fmt.Errorf("block height %d <= current tip %d (possible fork)", block.Header.Height, bc.height)
+		}
 		if block.Header.Height != bc.height+1 {
 			return fmt.Errorf("block height %d does not follow tip %d", block.Header.Height, bc.height)
 		}

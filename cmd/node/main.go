@@ -151,6 +151,7 @@ func main() {
 	log.Printf("P2P listening on %s", p2pAddr)
 
 	// ---- connect to seed peers ----
+	connectedSeeds := 0
 	for _, sp := range cfg.SeedPeers {
 		if err := node.AddPeer(sp.ID, sp.Addr); err != nil {
 			log.Printf("seed peer %s (%s): %v", sp.ID, sp.Addr, err)
@@ -160,7 +161,11 @@ func main() {
 		if peer := node.Peer(sp.ID); peer != nil {
 			syncer.SyncWithPeer(peer)
 		}
+		connectedSeeds++
 		log.Printf("Connected to seed peer %s (%s)", sp.ID, sp.Addr)
+	}
+	if len(cfg.SeedPeers) > 0 && connectedSeeds == 0 {
+		log.Println("WARNING: failed to connect to any seed peer — node is isolated")
 	}
 
 	// ---- RPC ----

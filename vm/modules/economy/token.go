@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/tolelom/tolchain/core"
+	"github.com/tolelom/tolchain/crypto"
 	"github.com/tolelom/tolchain/events"
 	"github.com/tolelom/tolchain/vm"
 )
@@ -24,6 +25,9 @@ func handleTransfer(ctx *vm.Context, payload json.RawMessage) error {
 	}
 	if p.To == "" {
 		return fmt.Errorf("transfer to address required")
+	}
+	if _, err := crypto.PubKeyFromHex(p.To); err != nil {
+		return fmt.Errorf("invalid to address: %w", err)
 	}
 
 	sender, err := ctx.State.GetAccount(ctx.Tx.From)

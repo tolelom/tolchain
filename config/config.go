@@ -95,11 +95,16 @@ func (c *Config) Validate() error {
 	if len(c.Validators) == 0 {
 		return fmt.Errorf("validators list must not be empty")
 	}
+	seen := make(map[string]bool, len(c.Validators))
 	for i, v := range c.Validators {
 		b, err := hex.DecodeString(v)
 		if err != nil || len(b) != 32 {
 			return fmt.Errorf("validators[%d]: must be 64-char hex (32 bytes ed25519 pubkey), got %q", i, v)
 		}
+		if seen[v] {
+			return fmt.Errorf("validators[%d]: duplicate pubkey %q", i, v)
+		}
+		seen[v] = true
 	}
 	if c.TLS != nil {
 		t := c.TLS

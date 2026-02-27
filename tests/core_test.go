@@ -78,7 +78,7 @@ func TestBlockHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	block := core.NewBlock(1, "0000", pub.Hex(), nil)
+	block := core.NewBlock("test-chain", 1, "0000", pub.Hex(), nil)
 	block.Sign(priv)
 
 	if block.Hash == "" {

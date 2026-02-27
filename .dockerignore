@@ -1,0 +1,6 @@
+.git
+.claude
+data
+*.key
+*.env
+CODE_STRUCTURE.md

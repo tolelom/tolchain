@@ -101,8 +101,14 @@ func (n *Node) AddPeer(id, addr string) error {
 	go n.readLoop(peer)
 
 	// Send hello
-	hello, _ := json.Marshal(map[string]string{"node_id": n.nodeID})
-	_ = peer.Send(Message{Type: MsgHello, Payload: hello})
+	hello, err := json.Marshal(map[string]string{"node_id": n.nodeID})
+	if err != nil {
+		log.Printf("[network] marshal hello: %v", err)
+		return nil
+	}
+	if err := peer.Send(Message{Type: MsgHello, Payload: hello}); err != nil {
+		log.Printf("[network] send hello to %s: %v", id, err)
+	}
 	return nil
 }
 
@@ -122,7 +128,9 @@ func (n *Node) Broadcast(msg Message) {
 	}
 	n.mu.RUnlock()
 	for _, p := range peers {
-		_ = p.Send(msg)
+		if err := p.Send(msg); err != nil {
+			log.Printf("[network] broadcast to %s: %v", p.ID, err)
+		}
 	}
 }
 
@@ -177,6 +185,9 @@ func (n *Node) acceptLoop() {
 
 func (n *Node) readLoop(peer *Peer) {
 	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[network] readLoop panic from %s: %v", peer.ID, r)
+		}
 		peer.Close()
 		n.mu.Lock()
 		delete(n.peers, peer.ID)
@@ -199,7 +210,10 @@ func (n *Node) readLoop(peer *Peer) {
 func (n *Node) handleTx(_ *Peer, msg Message) {
 	var tx core.Transaction
 	if err := json.Unmarshal(msg.Payload, &tx); err != nil {
+		log.Printf("[network] unmarshal tx: %v", err)
 		return
 	}
-	_ = n.mempool.Add(&tx) // silently drop duplicates / invalid txs
+	if err := n.mempool.Add(&tx); err != nil {
+		log.Printf("[network] mempool add: %v", err)
+	}
 }

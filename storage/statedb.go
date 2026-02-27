@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/crypto"
@@ -39,7 +40,9 @@ type stateSnapshot struct {
 
 // StateDB implements core.State on top of a DB with in-memory write buffer,
 // snapshot/rollback, and deterministic state-root computation.
+// All methods are protected by a mutex for future-proof concurrency safety.
 type StateDB struct {
+	mu        sync.Mutex
 	db        DB
 	dirty     map[string][]byte
 	deleted   map[string]bool
@@ -80,6 +83,8 @@ func (s *StateDB) del(key string) {
 // ---- Account ----
 
 func (s *StateDB) GetAccount(address string) (*core.Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data, err := s.get(prefixAccount + address)
 	if errors.Is(err, core.ErrNotFound) {
 		return &core.Account{Address: address}, nil // zero-value account
@@ -95,6 +100,8 @@ func (s *StateDB) GetAccount(address string) (*core.Account, error) {
 }
 
 func (s *StateDB) SetAccount(acc *core.Account) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data, err := json.Marshal(acc)
 	if err != nil {
 		return err
@@ -106,6 +113,8 @@ func (s *StateDB) SetAccount(acc *core.Account) error {
 // ---- Asset ----
 
 func (s *StateDB) GetAsset(id string) (*core.Asset, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data, err := s.get(prefixAsset + id)
 	if err != nil {
 		return nil, err
@@ -118,6 +127,8 @@ func (s *StateDB) GetAsset(id string) (*core.Asset, error) {
 }
 
 func (s *StateDB) SetAsset(asset *core.Asset) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data, err := json.Marshal(asset)
 	if err != nil {
 		return err
@@ -127,6 +138,8 @@ func (s *StateDB) SetAsset(asset *core.Asset) error {
 }
 
 func (s *StateDB) DeleteAsset(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.del(prefixAsset + id)
 	return nil
 }
@@ -134,6 +147,8 @@ func (s *StateDB) DeleteAsset(id string) error {
 // ---- Template ----
 
 func (s *StateDB) GetTemplate(id string) (*core.AssetTemplate, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data, err := s.get(prefixTemplate + id)
 	if err != nil {
 		return nil, err
@@ -146,6 +161,8 @@ func (s *StateDB) GetTemplate(id string) (*core.AssetTemplate, error) {
 }
 
 func (s *StateDB) SetTemplate(t *core.AssetTemplate) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data, err := json.Marshal(t)
 	if err != nil {
 		return err
@@ -157,6 +174,8 @@ func (s *StateDB) SetTemplate(t *core.AssetTemplate) error {
 // ---- Session ----
 
 func (s *StateDB) GetSession(id string) (*core.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data, err := s.get(prefixSession + id)
 	if err != nil {
 		return nil, err
@@ -169,6 +188,8 @@ func (s *StateDB) GetSession(id string) (*core.Session, error) {
 }
 
 func (s *StateDB) SetSession(sess *core.Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data, err := json.Marshal(sess)
 	if err != nil {
 		return err
@@ -180,6 +201,8 @@ func (s *StateDB) SetSession(sess *core.Session) error {
 // ---- Market ----
 
 func (s *StateDB) GetListing(id string) (*core.MarketListing, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data, err := s.get(prefixListing + id)
 	if err != nil {
 		return nil, err
@@ -192,6 +215,8 @@ func (s *StateDB) GetListing(id string) (*core.MarketListing, error) {
 }
 
 func (s *StateDB) SetListing(l *core.MarketListing) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data, err := json.Marshal(l)
 	if err != nil {
 		return err
@@ -204,6 +229,8 @@ func (s *StateDB) SetListing(l *core.MarketListing) error {
 
 // Snapshot saves the current write buffer and returns a snapshot ID.
 func (s *StateDB) Snapshot() (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	snap := stateSnapshot{
 		dirty:   make(map[string][]byte, len(s.dirty)),
 		deleted: make(map[string]bool, len(s.deleted)),
@@ -223,6 +250,8 @@ func (s *StateDB) Snapshot() (int, error) {
 // RevertToSnapshot restores the write buffer to a previously saved snapshot.
 // The snapshot maps are deep-copied so that subsequent writes cannot corrupt them.
 func (s *StateDB) RevertToSnapshot(id int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if id < 0 || id >= len(s.snapshots) {
 		return fmt.Errorf("invalid snapshot id %d", id)
 	}
@@ -251,6 +280,8 @@ func (s *StateDB) RevertToSnapshot(id int) error {
 // pairs using length-prefix encoding.  It does NOT flush or modify state,
 // so it is safe to call before signing a block.
 func (s *StateDB) ComputeRoot() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	// Step 1: collect all persisted state entries from DB.
 	merged := make(map[string][]byte)
 	for _, prefix := range statePrefixes {
@@ -301,6 +332,8 @@ func (s *StateDB) ComputeRoot() string {
 // WriteBatch and then clears it. Call ComputeRoot() before signing the block,
 // then call Commit() after the block is safely stored.
 func (s *StateDB) Commit() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	batch := s.db.NewBatch()
 	for k, v := range s.dirty {
 		batch.Set([]byte(k), v)

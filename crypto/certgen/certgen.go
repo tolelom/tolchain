@@ -140,5 +140,11 @@ func writePEM(path, typ string, data []byte) error {
 		return fmt.Errorf("create %s: %w", path, err)
 	}
 	defer f.Close()
-	return pem.Encode(f, &pem.Block{Type: typ, Bytes: data})
+	if err := pem.Encode(f, &pem.Block{Type: typ, Bytes: data}); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("sync %s: %w", path, err)
+	}
+	return nil
 }

@@ -79,7 +79,7 @@ func (h *Handler) getBlock(req Request) Response {
 		return errResponse(req.ID, CodeInternalError, err.Error())
 	}
 	if block == nil {
-		return errResponse(req.ID, CodeInternalError, "no block found")
+		return okResponse(req.ID, nil)
 	}
 	return okResponse(req.ID, block)
 }

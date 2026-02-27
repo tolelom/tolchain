@@ -13,6 +13,7 @@ import (
 
 // BlockHeader contains the block metadata that is hashed and signed.
 type BlockHeader struct {
+	ChainID   string `json:"chain_id"`   // network identifier (prevents cross-chain replay)
 	Height    int64  `json:"height"`
 	PrevHash  string `json:"prev_hash"`
 	StateRoot string `json:"state_root"` // hash of state after executing this block
@@ -34,7 +35,7 @@ type Block struct {
 func (b *Block) ComputeHash() string {
 	data, err := json.Marshal(b.Header)
 	if err != nil {
-		return ""
+		panic("block hash marshal failed: " + err.Error())
 	}
 	return crypto.Hash(data)
 }
@@ -86,9 +87,10 @@ func ComputeTxRoot(txs []*Transaction) string {
 }
 
 // NewBlock creates an unsigned block with the given parameters.
-func NewBlock(height int64, prevHash, proposer string, txs []*Transaction) *Block {
+func NewBlock(chainID string, height int64, prevHash, proposer string, txs []*Transaction) *Block {
 	return &Block{
 		Header: BlockHeader{
+			ChainID:   chainID,
 			Height:    height,
 			PrevHash:  prevHash,
 			TxRoot:    ComputeTxRoot(txs),
