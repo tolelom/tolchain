@@ -15,5 +15,7 @@ USER tol
 WORKDIR /home/tol
 EXPOSE 8545 30303
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD curl -sf http://localhost:8545/ || exit 1
+  CMD curl -sf -X POST -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"getBlockHeight","params":{},"id":0}' \
+      http://localhost:8545/ || exit 1
 ENTRYPOINT ["tolchain-node"]
