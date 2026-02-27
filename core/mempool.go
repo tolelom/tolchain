@@ -33,10 +33,10 @@ func (m *Mempool) Add(tx *Transaction) error {
 		return fmt.Errorf("invalid tx signature: %w", err)
 	}
 	now := time.Now().UnixNano()
-	if now-tx.Timestamp > maxTxAge {
+	if now > tx.Timestamp && now-tx.Timestamp > maxTxAge {
 		return errors.New("transaction expired")
 	}
-	if tx.Timestamp-now > maxTxFuture {
+	if tx.Timestamp > now && tx.Timestamp-now > maxTxFuture {
 		return errors.New("transaction timestamp too far in the future")
 	}
 	m.mu.Lock()

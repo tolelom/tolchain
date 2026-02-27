@@ -99,5 +99,5 @@ func LoadKey(path, password string) (crypto.PrivateKey, error) {
 }
 
 func deriveKey(password string, salt []byte) []byte {
-	return pbkdf2.Key([]byte(password), salt, 100_000, 32, sha256.New)
+	return pbkdf2.Key([]byte(password), salt, 210_000, 32, sha256.New)
 }

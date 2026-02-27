@@ -66,7 +66,6 @@ func (idx *Indexer) onAssetTransferred(ev events.Event) {
 	}
 	if err := idx.removeFromList(prefixOwnerAssets+from, assetID); err != nil {
 		log.Printf("[indexer] transfer remove failed (from=%s asset=%s): %v", from, assetID, err)
-		return
 	}
 	if err := idx.addToList(prefixOwnerAssets+to, assetID); err != nil {
 		log.Printf("[indexer] transfer add failed (to=%s asset=%s): %v", to, assetID, err)
@@ -118,7 +117,15 @@ func (idx *Indexer) getList(key string) ([]string, error) {
 }
 
 func (idx *Indexer) addToList(key, value string) error {
-	ids, _ := idx.getList(key)
+	ids, err := idx.getList(key)
+	if err != nil {
+		return fmt.Errorf("read list: %w", err)
+	}
+	for _, id := range ids {
+		if id == value {
+			return nil // already present
+		}
+	}
 	ids = append(ids, value)
 	data, err := json.Marshal(ids)
 	if err != nil {
@@ -128,7 +135,13 @@ func (idx *Indexer) addToList(key, value string) error {
 }
 
 func (idx *Indexer) removeFromList(key, value string) error {
-	ids, _ := idx.getList(key)
+	ids, err := idx.getList(key)
+	if err != nil {
+		return fmt.Errorf("read list: %w", err)
+	}
+	if ids == nil {
+		return nil
+	}
 	filtered := ids[:0]
 	for _, id := range ids {
 		if id != value {

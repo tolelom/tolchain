@@ -65,7 +65,7 @@ func (tx *Transaction) Hash() string {
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
-		return ""
+		panic("transaction hash marshal failed: " + err.Error())
 	}
 	return crypto.Hash(data)
 }

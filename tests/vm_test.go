@@ -39,7 +39,7 @@ func TestTokenTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	block := core.NewBlock(1, "0000", sender.PubKey(), []*core.Transaction{tx})
+	block := core.NewBlock("test-chain", 1, "0000", sender.PubKey(), []*core.Transaction{tx})
 	if err := exec.ExecuteTx(block, tx); err != nil {
 		t.Fatalf("ExecuteTx: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestMintAsset(t *testing.T) {
 	creator, _ := wallet.Generate()
 	_ = state.SetAccount(&core.Account{Address: creator.PubKey(), Balance: 1000})
 
-	block := core.NewBlock(1, "0000", creator.PubKey(), nil)
+	block := core.NewBlock("test-chain", 1, "0000", creator.PubKey(), nil)
 
 	// Register template (nonce=0)
 	regTx, err := creator.NewTx("test-chain", core.TxRegisterTemplate, 0, 0, core.RegisterTemplatePayload{
@@ -118,9 +118,10 @@ func TestNonceReplay(t *testing.T) {
 	w, _ := wallet.Generate()
 	_ = state.SetAccount(&core.Account{Address: w.PubKey(), Balance: 1000})
 
-	block := core.NewBlock(1, "0000", w.PubKey(), nil)
+	block := core.NewBlock("test-chain", 1, "0000", w.PubKey(), nil)
 
-	tx1, _ := w.Transfer("test-chain", "aabb", 1, 0, 0)
+	recipient, _ := wallet.Generate()
+	tx1, _ := w.Transfer("test-chain", recipient.PubKey(), 1, 0, 0)
 	if err := exec.ExecuteTx(block, tx1); err != nil {
 		t.Fatalf("first tx: %v", err)
 	}

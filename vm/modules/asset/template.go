@@ -24,8 +24,12 @@ func handleRegisterTemplate(ctx *vm.Context, payload json.RawMessage) error {
 	}
 
 	// Prevent overwriting an existing template
-	if _, err := ctx.State.GetTemplate(p.ID); err == nil {
+	_, err := ctx.State.GetTemplate(p.ID)
+	if err == nil {
 		return fmt.Errorf("template %q already exists", p.ID)
+	}
+	if !errors.Is(err, core.ErrNotFound) {
+		return fmt.Errorf("check template %q: %w", p.ID, err)
 	}
 
 	t := &core.AssetTemplate{

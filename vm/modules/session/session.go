@@ -121,6 +121,10 @@ func handleSessionResult(ctx *vm.Context, payload json.RawMessage) error {
 		}
 		totalRewards += reward
 	}
+	// (E) Require all staked tokens to be distributed — prevents accidental loss.
+	if totalRewards != totalStakes {
+		return fmt.Errorf("rewards (%d) must equal total stakes (%d); undistributed tokens would be lost", totalRewards, totalStakes)
+	}
 
 	// Distribute rewards
 	for pubkey, reward := range p.Outcome {

@@ -1,8 +1,6 @@
 package config
 
 import (
-	"strings"
-
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/crypto"
 )
@@ -32,7 +30,7 @@ func CreateGenesisBlock(cfg *Config, state core.State, proposerPriv crypto.Priva
 		return nil, err
 	}
 
-	block := core.NewBlock(0, GenesisHash, proposerPub.Hex(), nil)
+	block := core.NewBlock(cfg.Genesis.ChainID, 0, GenesisHash, proposerPub.Hex(), nil)
 	block.Header.StateRoot = stateRoot
 	// Embed chain ID in PrevHash comment via TxRoot for identification
 	block.Header.TxRoot = crypto.Hash([]byte(cfg.Genesis.ChainID))
@@ -42,5 +40,5 @@ func CreateGenesisBlock(cfg *Config, state core.State, proposerPriv crypto.Priva
 
 // IsGenesisHash returns true if the hash is the canonical genesis prev-hash.
 func IsGenesisHash(h string) bool {
-	return strings.Count(h, "0") == len(h) && len(h) == 64
+	return h == GenesisHash
 }

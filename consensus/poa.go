@@ -56,7 +56,7 @@ func (p *PoA) IsProposer() bool {
 		return false
 	}
 	nextHeight := p.bc.Height() + 1
-	idx := int(nextHeight) % len(p.cfg.Validators)
+	idx := int(nextHeight % int64(len(p.cfg.Validators)))
 	return p.cfg.Validators[idx] == p.pubKey.Hex()
 }
 
@@ -83,7 +83,7 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 		nextHeight = tip.Header.Height + 1
 	}
 
-	block := core.NewBlock(nextHeight, prevHash, p.pubKey.Hex(), txs)
+	block := core.NewBlock(p.cfg.Genesis.ChainID, nextHeight, prevHash, p.pubKey.Hex(), txs)
 
 	if err := p.exec.ExecuteBlock(block); err != nil {
 		return nil, fmt.Errorf("execute block: %w", err)
@@ -120,12 +120,21 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 	return block, nil
 }
 
+// maxBlockTimeDrift is the maximum allowed clock drift for incoming blocks.
+const maxBlockTimeDrift = int64(15 * time.Second)
+
 // ValidateBlock checks that block was proposed by the expected validator.
 func (p *PoA) ValidateBlock(block *core.Block) error {
 	if len(p.cfg.Validators) == 0 {
 		return errors.New("no validators configured")
 	}
-	idx := int(block.Header.Height) % len(p.cfg.Validators)
+
+	// (B) Chain ID must match this node's network.
+	if block.Header.ChainID != p.cfg.Genesis.ChainID {
+		return fmt.Errorf("chain ID mismatch: got %q want %q", block.Header.ChainID, p.cfg.Genesis.ChainID)
+	}
+
+	idx := int(block.Header.Height % int64(len(p.cfg.Validators)))
 	expected := p.cfg.Validators[idx]
 	if block.Header.Proposer != expected {
 		return fmt.Errorf("wrong proposer: got %s want %s", block.Header.Proposer, expected)
@@ -145,6 +154,13 @@ func (p *PoA) ValidateBlock(block *core.Block) error {
 		return fmt.Errorf("tx_root mismatch: got %s want %s", block.Header.TxRoot, txRoot)
 	}
 
+	// (C) Timestamp validation: must not be too far in the future
+	// and must be >= the previous block's timestamp.
+	now := time.Now().UnixNano()
+	if block.Header.Timestamp > now+maxBlockTimeDrift {
+		return fmt.Errorf("block timestamp too far in future: %d (now %d)", block.Header.Timestamp, now)
+	}
+
 	// Validate previous hash linkage
 	tip := p.bc.Tip()
 	if tip == nil {
@@ -157,6 +173,10 @@ func (p *PoA) ValidateBlock(block *core.Block) error {
 		}
 		if block.Header.Height != tip.Header.Height+1 {
 			return fmt.Errorf("height mismatch: got %d want %d", block.Header.Height, tip.Header.Height+1)
+		}
+		// Timestamp must not go backwards.
+		if block.Header.Timestamp < tip.Header.Timestamp {
+			return fmt.Errorf("block timestamp %d < previous block %d", block.Header.Timestamp, tip.Header.Timestamp)
 		}
 	}
 	return nil

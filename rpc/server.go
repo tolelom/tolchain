@@ -65,6 +65,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if s.authToken != "" {
 		if r.Header.Get("Authorization") != "Bearer "+s.authToken {
+			w.WriteHeader(http.StatusUnauthorized)
 			writeJSON(w, errResponse(nil, CodeUnauthorized, "unauthorized"))
 			return
 		}
@@ -89,5 +90,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("[rpc] write response: %v", err)
+	}
 }

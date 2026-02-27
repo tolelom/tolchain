@@ -92,9 +92,12 @@ func (s *Syncer) handleGetBlocks(peer *Peer, msg Message) {
 	}
 	data, err := json.Marshal(BlocksResponse{Blocks: blocks})
 	if err != nil {
+		log.Printf("[sync] marshal blocks response: %v", err)
 		return
 	}
-	_ = peer.Send(Message{Type: MsgBlocks, Payload: data})
+	if err := peer.Send(Message{Type: MsgBlocks, Payload: data}); err != nil {
+		log.Printf("[sync] send blocks to %s: %v", peer.ID, err)
+	}
 }
 
 func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
@@ -106,7 +109,7 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 		if s.validator != nil {
 			if err := s.validator.ValidateBlock(b); err != nil {
 				log.Printf("[sync] block %d validation failed: %v", b.Header.Height, err)
-				continue // skip this block, try the rest
+				return // stop processing blocks from this peer
 			}
 		}
 
@@ -125,6 +128,18 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 				}
 				log.Printf("[sync] block %d execution failed: %v", b.Header.Height, err)
 				continue
+			}
+		}
+
+		// (A) Verify state root matches after execution.
+		if s.exec != nil && s.state != nil {
+			computedRoot := s.state.ComputeRoot()
+			if b.Header.StateRoot != "" && computedRoot != b.Header.StateRoot {
+				if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
+					log.Fatalf("[sync] FATAL: block %d revert failed after state root mismatch: %v", b.Header.Height, revErr)
+				}
+				log.Printf("[sync] block %d state root mismatch: computed %s want %s", b.Header.Height, computedRoot, b.Header.StateRoot)
+				return
 			}
 		}
 

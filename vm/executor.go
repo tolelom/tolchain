@@ -87,8 +87,35 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction) error {
 	}
 	acc.Balance -= tx.Fee
 	acc.Nonce++
-	if err := e.state.SetAccount(acc); err != nil {
-		return err
+
+	// (D) Credit fee to block proposer instead of burning it.
+	// When sender IS the proposer, both adjustments must be applied to the
+	// same in-memory struct to avoid a later SetAccount overwriting the first.
+	if tx.Fee > 0 && block.Header.Proposer != "" && tx.From != block.Header.Proposer {
+		// Different accounts: save sender, then load & credit proposer.
+		if err := e.state.SetAccount(acc); err != nil {
+			return err
+		}
+		proposer, err := e.state.GetAccount(block.Header.Proposer)
+		if err != nil {
+			return fmt.Errorf("get proposer account: %w", err)
+		}
+		if proposer.Balance > math.MaxUint64-tx.Fee {
+			return fmt.Errorf("proposer balance overflow")
+		}
+		proposer.Balance += tx.Fee
+		if err := e.state.SetAccount(proposer); err != nil {
+			return fmt.Errorf("set proposer account: %w", err)
+		}
+	} else {
+		// Same account (or fee==0): fee deduction and credit cancel out on
+		// the same struct, so just save the nonce increment.
+		if tx.Fee > 0 && tx.From == block.Header.Proposer {
+			acc.Balance += tx.Fee
+		}
+		if err := e.state.SetAccount(acc); err != nil {
+			return err
+		}
 	}
 
 	ctx := &Context{
