@@ -61,6 +61,8 @@ func (p *PoA) IsProposer() bool {
 }
 
 // ProduceBlock builds, signs, executes and commits the next block.
+// Failed transactions are skipped (and removed from the mempool) so that a
+// single invalid tx cannot stall block production.
 func (p *PoA) ProduceBlock() (*core.Block, error) {
 	if !p.IsProposer() {
 		return nil, errors.New("not the proposer for this round")
@@ -70,7 +72,7 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 	if limit <= 0 {
 		limit = 500
 	}
-	txs := p.mempool.Pending(limit)
+	candidates := p.mempool.Pending(limit)
 
 	tip := p.bc.Tip()
 	var prevHash string
@@ -83,11 +85,42 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 		nextHeight = tip.Header.Height + 1
 	}
 
-	block := core.NewBlock(p.cfg.Genesis.ChainID, nextHeight, prevHash, p.pubKey.Hex(), txs)
-
-	if err := p.exec.ExecuteBlock(block); err != nil {
-		return nil, fmt.Errorf("execute block: %w", err)
+	// Take a block-level snapshot so we can rollback all state changes if
+	// AddBlock fails later.
+	blockSnapID, err := p.state.Snapshot()
+	if err != nil {
+		return nil, fmt.Errorf("block snapshot: %w", err)
 	}
+
+	// Buffer events during execution so they are only delivered after commit.
+	buf := events.NewBuffer()
+	p.exec.SetEmitter(buf)
+
+	// Build a temporary block to provide context during execution.
+	tmpBlock := core.NewBlock(p.cfg.Genesis.ChainID, nextHeight, prevHash, p.pubKey.Hex(), candidates)
+
+	// Execute each transaction individually; keep only successful ones.
+	var successTxs []*core.Transaction
+	var failedIDs []string
+	for _, tx := range candidates {
+		if txErr := p.exec.ExecuteTx(tmpBlock, tx); txErr != nil {
+			log.Printf("[consensus] skipping failed tx %s: %v", tx.ID, txErr)
+			failedIDs = append(failedIDs, tx.ID)
+			continue
+		}
+		successTxs = append(successTxs, tx)
+	}
+
+	// Restore the real emitter.
+	p.exec.SetEmitter(p.emitter)
+
+	// Remove failed transactions from the mempool immediately.
+	if len(failedIDs) > 0 {
+		p.mempool.Remove(failedIDs)
+	}
+
+	// Rebuild the final block with only successful transactions.
+	block := core.NewBlock(p.cfg.Genesis.ChainID, nextHeight, prevHash, p.pubKey.Hex(), successTxs)
 
 	// Compute root from the write buffer BEFORE flushing so that if AddBlock
 	// fails the state has not yet been persisted and the node stays consistent.
@@ -95,6 +128,12 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 	block.Sign(p.privKey)
 
 	if err := p.bc.AddBlock(block); err != nil {
+		// Discard buffered events and rollback all state changes.
+		buf.Discard()
+		if revErr := p.state.RevertToSnapshot(blockSnapID); revErr != nil {
+			log.Fatalf("[consensus] FATAL: block %d AddBlock failed and snapshot revert failed: %v (add: %v)",
+				block.Header.Height, revErr, err)
+		}
 		return nil, fmt.Errorf("add block: %w", err)
 	}
 
@@ -104,15 +143,18 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 			block.Header.Height, err)
 	}
 
-	// Emit after Sign() so block.Hash is set correctly.
+	// Flush buffered tx-level events now that the block is committed.
+	buf.Flush(p.emitter)
+
+	// Emit block commit after Sign() so block.Hash is set correctly.
 	p.emitter.Emit(events.Event{
 		Type:        events.EventBlockCommit,
 		BlockHeight: block.Header.Height,
-		Data:        map[string]any{"hash": block.Hash, "txs": len(block.Transactions)},
+		Data:        map[string]any{"hash": block.Hash, "txs": len(block.Transactions), "block": block},
 	})
 
-	txIDs := make([]string, len(txs))
-	for i, tx := range txs {
+	txIDs := make([]string, len(successTxs))
+	for i, tx := range successTxs {
 		txIDs[i] = tx.ID
 	}
 	p.mempool.Remove(txIDs)

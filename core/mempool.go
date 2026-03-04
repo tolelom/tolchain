@@ -15,14 +15,18 @@ const (
 
 // Mempool is a thread-safe pending-transaction pool.
 type Mempool struct {
-	mu  sync.RWMutex
-	txs map[string]*Transaction
-	ord []string // insertion-ordered IDs for deterministic pending iteration
+	mu     sync.RWMutex
+	txs    map[string]*Transaction
+	ord    []string                       // insertion-ordered IDs for deterministic pending iteration
+	nonces map[string]map[uint64]string   // sender → nonce → tx ID (prevents duplicate nonces)
 }
 
 // NewMempool creates an empty mempool.
 func NewMempool() *Mempool {
-	return &Mempool{txs: make(map[string]*Transaction)}
+	return &Mempool{
+		txs:    make(map[string]*Transaction),
+		nonces: make(map[string]map[uint64]string),
+	}
 }
 
 // Add validates and inserts a transaction. Returns an error if the pool is
@@ -47,8 +51,18 @@ func (m *Mempool) Add(tx *Transaction) error {
 	if _, exists := m.txs[tx.ID]; exists {
 		return errors.New("tx already in pool")
 	}
+	// Reject duplicate nonce from the same sender.
+	if senderNonces, ok := m.nonces[tx.From]; ok {
+		if _, dup := senderNonces[tx.Nonce]; dup {
+			return fmt.Errorf("duplicate nonce %d from sender %s", tx.Nonce, tx.From)
+		}
+	}
 	m.txs[tx.ID] = tx
 	m.ord = append(m.ord, tx.ID)
+	if m.nonces[tx.From] == nil {
+		m.nonces[tx.From] = make(map[uint64]string)
+	}
+	m.nonces[tx.From][tx.Nonce] = tx.ID
 	return nil
 }
 
@@ -82,7 +96,16 @@ func (m *Mempool) Remove(ids []string) {
 	defer m.mu.Unlock()
 	removed := make(map[string]bool, len(ids))
 	for _, id := range ids {
-		delete(m.txs, id)
+		if tx, ok := m.txs[id]; ok {
+			// Clean up nonce tracking.
+			if senderNonces, exists := m.nonces[tx.From]; exists {
+				delete(senderNonces, tx.Nonce)
+				if len(senderNonces) == 0 {
+					delete(m.nonces, tx.From)
+				}
+			}
+			delete(m.txs, id)
+		}
 		removed[id] = true
 	}
 	filtered := m.ord[:0]

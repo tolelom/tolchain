@@ -13,6 +13,7 @@ import (
 	"github.com/tolelom/tolchain/config"
 	"github.com/tolelom/tolchain/consensus"
 	"github.com/tolelom/tolchain/core"
+	"github.com/tolelom/tolchain/crypto"
 	"github.com/tolelom/tolchain/events"
 	"github.com/tolelom/tolchain/indexer"
 	"github.com/tolelom/tolchain/internal/testutil"
@@ -134,8 +135,8 @@ func startTestNode(t *testing.T, w *wallet.Wallet) (rpcURL string, cleanup func(
 	poa := consensus.New(cfg, bc, stateDB, mempool, exec, emitter, w.PrivKey())
 
 	// P2P on random port
-	node := network.NewNode("test-node", ":0", mempool, nil)
-	_ = network.NewSyncer(node, bc, poa, exec, stateDB)
+	node := network.NewNode("test-node", ":0", testChainID, mempool, nil)
+	_ = network.NewSyncer(node, bc, poa, exec, stateDB, emitter, mempool)
 	if err := node.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -368,12 +369,21 @@ func TestGameIntegration(t *testing.T) {
 	// 6. Session: 게임 세션 (스테이킹 대전)
 	// ============================================
 	t.Run("6_Session", func(t *testing.T) {
+		// Players sign consent for the session.
+		consentMsg := []byte("session:match-001")
+		p1Sig := crypto.Sign(player1.PrivKey(), consentMsg)
+		p2Sig := crypto.Sign(player2.PrivKey(), consentMsg)
+
 		// Game server opens a session: 2 players, 10,000 stake each
 		tx, _ := gameServer.NewTx(testChainID, core.TxSessionOpen, gsNonce, 10, core.SessionOpenPayload{
 			SessionID: "match-001",
 			GameID:    "pvp-arena",
 			Players:   []string{player1.PubKey(), player2.PubKey()},
 			Stakes:    10_000,
+			Signatures: map[string]string{
+				player1.PubKey(): p1Sig,
+				player2.PubKey(): p2Sig,
+			},
 		})
 		sendTx(t, url, tx)
 		gsNonce++

@@ -20,6 +20,8 @@ const (
 	EventSessionClose  EventType = "session_close"
 	EventMarketList    EventType = "market_list"
 	EventMarketBuy     EventType = "market_buy"
+	EventMarketCancel  EventType = "market_cancel"
+	EventSessionCancel EventType = "session_cancel"
 )
 
 // Event carries a typed payload emitted after a state change.

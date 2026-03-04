@@ -66,8 +66,13 @@ func (bc *Blockchain) AddBlock(block *Block) error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
-	// (F) Reject blocks at or below the current height (fork prevention).
-	if bc.tip != nil {
+	if bc.tip == nil {
+		// Genesis block must be at height 0.
+		if block.Header.Height != 0 {
+			return fmt.Errorf("first block must be at height 0, got %d", block.Header.Height)
+		}
+	} else {
+		// (F) Reject blocks at or below the current height (fork prevention).
 		if block.Header.Height <= bc.height {
 			return fmt.Errorf("block height %d <= current tip %d (possible fork)", block.Header.Height, bc.height)
 		}

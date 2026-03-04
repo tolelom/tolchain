@@ -15,6 +15,7 @@ import (
 func init() {
 	vm.Register(core.TxListMarket, handleListMarket)
 	vm.Register(core.TxBuyMarket, handleBuyMarket)
+	vm.Register(core.TxCancelListing, handleCancelListing)
 }
 
 func handleListMarket(ctx *vm.Context, payload json.RawMessage) error {
@@ -144,6 +145,50 @@ func handleBuyMarket(ctx *vm.Context, payload json.RawMessage) error {
 				"seller":     listing.Seller,
 				"price":      listing.Price,
 			},
+		})
+	}
+	return nil
+}
+
+func handleCancelListing(ctx *vm.Context, payload json.RawMessage) error {
+	var p core.CancelListingPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return fmt.Errorf("decode cancel_listing payload: %w", err)
+	}
+
+	listing, err := ctx.State.GetListing(p.ListingID)
+	if err != nil {
+		return fmt.Errorf("listing %q not found: %w", p.ListingID, err)
+	}
+	if !listing.Active {
+		return fmt.Errorf("listing %q is not active", p.ListingID)
+	}
+	if listing.Seller != ctx.Tx.From {
+		return errors.New("only the seller can cancel a listing")
+	}
+
+	// Deactivate listing.
+	listing.Active = false
+	if err := ctx.State.SetListing(listing); err != nil {
+		return err
+	}
+
+	// Clear the asset's active listing marker.
+	asset, err := ctx.State.GetAsset(listing.AssetID)
+	if err != nil {
+		return fmt.Errorf("asset %q not found: %w", listing.AssetID, err)
+	}
+	asset.ActiveListingID = ""
+	if err := ctx.State.SetAsset(asset); err != nil {
+		return err
+	}
+
+	if ctx.Emitter != nil {
+		ctx.Emitter.Emit(events.Event{
+			Type:        events.EventMarketCancel,
+			TxID:        ctx.Tx.ID,
+			BlockHeight: ctx.Block.Header.Height,
+			Data:        map[string]any{"listing_id": p.ListingID, "asset_id": listing.AssetID, "seller": listing.Seller},
 		})
 	}
 	return nil

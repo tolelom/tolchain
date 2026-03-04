@@ -22,6 +22,8 @@ const (
 	TxSessionResult    TxType = "session_result"
 	TxListMarket       TxType = "list_market"
 	TxBuyMarket        TxType = "buy_market"
+	TxCancelListing    TxType = "cancel_listing"
+	TxSessionCancel    TxType = "session_cancel"
 )
 
 // Transaction is the atomic unit of work on the chain.
@@ -149,11 +151,14 @@ type RegisterTemplatePayload struct {
 }
 
 // SessionOpenPayload opens a new game session and locks stakes.
+// When Stakes > 0, Signatures must contain each player's (except tx.From)
+// ed25519 signature over "session:<SessionID>" to prove consent.
 type SessionOpenPayload struct {
-	SessionID string   `json:"session_id"`
-	GameID    string   `json:"game_id"`
-	Players   []string `json:"players"` // participant pubkey hexes
-	Stakes    uint64   `json:"stakes"`  // tokens locked per player
+	SessionID  string            `json:"session_id"`
+	GameID     string            `json:"game_id"`
+	Players    []string          `json:"players"`              // participant pubkey hexes
+	Stakes     uint64            `json:"stakes"`               // tokens locked per player
+	Signatures map[string]string `json:"signatures,omitempty"` // pubkey hex → signature hex
 }
 
 // SessionResultPayload closes a session and distributes rewards.
@@ -171,4 +176,14 @@ type ListMarketPayload struct {
 // BuyMarketPayload purchases an active market listing.
 type BuyMarketPayload struct {
 	ListingID string `json:"listing_id"`
+}
+
+// CancelListingPayload cancels an active market listing.
+type CancelListingPayload struct {
+	ListingID string `json:"listing_id"`
+}
+
+// SessionCancelPayload cancels an open session and refunds stakes.
+type SessionCancelPayload struct {
+	SessionID string `json:"session_id"`
 }

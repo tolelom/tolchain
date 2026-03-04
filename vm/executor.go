@@ -11,21 +11,41 @@ import (
 // Context is passed to every Handler and provides access to the chain state,
 // the current block, the triggering transaction, and the event emitter.
 type Context struct {
-	State   core.State
-	Block   *core.Block
-	Tx      *core.Transaction
-	Emitter *events.Emitter
+	State     core.State
+	Block     *core.Block
+	Tx        *core.Transaction
+	Emitter   events.EventEmitter
+	Operators map[string]bool // operator pubkeys; nil or empty → no restrictions
 }
 
 // Executor applies transactions to the state using the global Handler registry.
 type Executor struct {
-	state   core.State
-	emitter *events.Emitter
+	state     core.State
+	emitter   events.EventEmitter
+	operators map[string]bool
 }
 
 // NewExecutor creates an Executor with the given state and event emitter.
-func NewExecutor(state core.State, emitter *events.Emitter) *Executor {
+func NewExecutor(state core.State, emitter events.EventEmitter) *Executor {
 	return &Executor{state: state, emitter: emitter}
+}
+
+// SetEmitter replaces the event emitter (e.g. with a Buffer during execution).
+func (e *Executor) SetEmitter(em events.EventEmitter) {
+	e.emitter = em
+}
+
+// SetOperators configures the set of authorised operator public keys.
+func (e *Executor) SetOperators(ops []string) {
+	if len(ops) == 0 {
+		e.operators = nil
+		return
+	}
+	m := make(map[string]bool, len(ops))
+	for _, o := range ops {
+		m[o] = true
+	}
+	e.operators = m
 }
 
 // ExecuteBlock applies all transactions in block sequentially.
@@ -119,10 +139,11 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction) error {
 	}
 
 	ctx := &Context{
-		State:   e.state,
-		Block:   block,
-		Tx:      tx,
-		Emitter: e.emitter,
+		State:     e.state,
+		Block:     block,
+		Tx:        tx,
+		Emitter:   e.emitter,
+		Operators: e.operators,
 	}
 	return globalRegistry.Execute(tx.Type, ctx, tx.Payload)
 }
