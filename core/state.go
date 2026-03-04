@@ -52,6 +52,23 @@ type MarketListing struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
+// Inventory tracks a player's equipped item slots.
+type Inventory struct {
+	Owner string            `json:"owner"` // pubkey hex
+	Slots map[string]string `json:"slots"` // slot_name → asset_id
+}
+
+// RandomCommitment stores a commit-reveal random number generation request.
+type RandomCommitment struct {
+	ID          string `json:"id"`
+	Committer   string `json:"committer"`    // pubkey hex
+	CommitHash  string `json:"commit_hash"`  // SHA-256 hex
+	BlockHeight int64  `json:"block_height"` // block when committed
+	Revealed    bool   `json:"revealed"`
+	Secret      string `json:"secret,omitempty"`
+	Result      string `json:"result,omitempty"` // deterministic random hex
+}
+
 // State is the full blockchain state interface. Implementations must be
 // snapshot-able so the executor can roll back failed transactions.
 type State interface {
@@ -75,6 +92,14 @@ type State interface {
 	// Market
 	GetListing(id string) (*MarketListing, error)
 	SetListing(l *MarketListing) error
+
+	// Inventory
+	GetInventory(owner string) (*Inventory, error)
+	SetInventory(inv *Inventory) error
+
+	// Random commitments
+	GetRandomCommitment(id string) (*RandomCommitment, error)
+	SetRandomCommitment(rc *RandomCommitment) error
 
 	// Snapshot / rollback / commit
 	Snapshot() (int, error)

@@ -58,3 +58,99 @@ func (w *Wallet) Transfer(chainID, to string, amount, nonce, fee uint64) (*core.
 		Amount: amount,
 	})
 }
+
+// MintAsset creates a signed mint_asset transaction.
+func (w *Wallet) MintAsset(chainID, templateID, owner string, properties map[string]any, nonce, fee uint64) (*core.Transaction, error) {
+	return w.NewTx(chainID, core.TxMintAsset, nonce, fee, core.MintAssetPayload{
+		TemplateID: templateID,
+		Owner:      owner,
+		Properties: properties,
+	})
+}
+
+// BurnAsset creates a signed burn_asset transaction.
+func (w *Wallet) BurnAsset(chainID, assetID string, nonce, fee uint64) (*core.Transaction, error) {
+	return w.NewTx(chainID, core.TxBurnAsset, nonce, fee, core.BurnAssetPayload{
+		AssetID: assetID,
+	})
+}
+
+// TransferAsset creates a signed transfer_asset transaction.
+func (w *Wallet) TransferAsset(chainID, assetID, to string, nonce, fee uint64) (*core.Transaction, error) {
+	return w.NewTx(chainID, core.TxTransferAsset, nonce, fee, core.TransferAssetPayload{
+		AssetID: assetID,
+		To:      to,
+	})
+}
+
+// RegisterTemplate creates a signed register_template transaction.
+func (w *Wallet) RegisterTemplate(chainID, id, name string, schema map[string]any, tradeable bool, nonce, fee uint64) (*core.Transaction, error) {
+	return w.NewTx(chainID, core.TxRegisterTemplate, nonce, fee, core.RegisterTemplatePayload{
+		ID:        id,
+		Name:      name,
+		Schema:    schema,
+		Tradeable: tradeable,
+	})
+}
+
+// ListMarket creates a signed list_market transaction.
+func (w *Wallet) ListMarket(chainID, assetID string, price, nonce, fee uint64) (*core.Transaction, error) {
+	return w.NewTx(chainID, core.TxListMarket, nonce, fee, core.ListMarketPayload{
+		AssetID: assetID,
+		Price:   price,
+	})
+}
+
+// BuyMarket creates a signed buy_market transaction.
+func (w *Wallet) BuyMarket(chainID, listingID string, nonce, fee uint64) (*core.Transaction, error) {
+	return w.NewTx(chainID, core.TxBuyMarket, nonce, fee, core.BuyMarketPayload{
+		ListingID: listingID,
+	})
+}
+
+// CancelListing creates a signed cancel_listing transaction.
+func (w *Wallet) CancelListing(chainID, listingID string, nonce, fee uint64) (*core.Transaction, error) {
+	return w.NewTx(chainID, core.TxCancelListing, nonce, fee, core.CancelListingPayload{
+		ListingID: listingID,
+	})
+}
+
+// EquipItem creates a signed equip_item transaction.
+func (w *Wallet) EquipItem(chainID, assetID, slot string, nonce, fee uint64) (*core.Transaction, error) {
+	return w.NewTx(chainID, core.TxEquipItem, nonce, fee, core.EquipItemPayload{
+		AssetID: assetID,
+		Slot:    slot,
+	})
+}
+
+// UnequipItem creates a signed unequip_item transaction.
+func (w *Wallet) UnequipItem(chainID, assetID string, nonce, fee uint64) (*core.Transaction, error) {
+	return w.NewTx(chainID, core.TxUnequipItem, nonce, fee, core.UnequipItemPayload{
+		AssetID: assetID,
+	})
+}
+
+// GrantReward creates a signed grant_reward transaction.
+func (w *Wallet) GrantReward(chainID, recipient string, tokenAmount uint64, assets []core.MintAssetPayload, nonce, fee uint64) (*core.Transaction, error) {
+	return w.NewTx(chainID, core.TxGrantReward, nonce, fee, core.GrantRewardPayload{
+		Recipient:   recipient,
+		TokenAmount: tokenAmount,
+		Assets:      assets,
+	})
+}
+
+// RandomCommit creates a signed random_commit transaction.
+func (w *Wallet) RandomCommit(chainID, commitID, commitHash string, nonce, fee uint64) (*core.Transaction, error) {
+	return w.NewTx(chainID, core.TxRandomCommit, nonce, fee, core.RandomCommitPayload{
+		CommitID:   commitID,
+		CommitHash: commitHash,
+	})
+}
+
+// RandomReveal creates a signed random_reveal transaction.
+func (w *Wallet) RandomReveal(chainID, commitID, secret string, nonce, fee uint64) (*core.Transaction, error) {
+	return w.NewTx(chainID, core.TxRandomReveal, nonce, fee, core.RandomRevealPayload{
+		CommitID: commitID,
+		Secret:   secret,
+	})
+}

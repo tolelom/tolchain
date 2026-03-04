@@ -24,6 +24,11 @@ const (
 	TxBuyMarket        TxType = "buy_market"
 	TxCancelListing    TxType = "cancel_listing"
 	TxSessionCancel    TxType = "session_cancel"
+	TxEquipItem        TxType = "equip_item"
+	TxUnequipItem      TxType = "unequip_item"
+	TxGrantReward      TxType = "grant_reward"
+	TxRandomCommit     TxType = "random_commit"
+	TxRandomReveal     TxType = "random_reveal"
 )
 
 // Transaction is the atomic unit of work on the chain.
@@ -186,4 +191,34 @@ type CancelListingPayload struct {
 // SessionCancelPayload cancels an open session and refunds stakes.
 type SessionCancelPayload struct {
 	SessionID string `json:"session_id"`
+}
+
+// EquipItemPayload equips an asset to a named slot.
+type EquipItemPayload struct {
+	AssetID string `json:"asset_id"`
+	Slot    string `json:"slot"`
+}
+
+// UnequipItemPayload removes an asset from its equipped slot.
+type UnequipItemPayload struct {
+	AssetID string `json:"asset_id"`
+}
+
+// GrantRewardPayload atomically grants tokens and mints assets. Operator-only.
+type GrantRewardPayload struct {
+	Recipient   string           `json:"recipient"`
+	TokenAmount uint64           `json:"token_amount"`
+	Assets      []MintAssetPayload `json:"assets"`
+}
+
+// RandomCommitPayload commits a hash for the commit-reveal random scheme.
+type RandomCommitPayload struct {
+	CommitID   string `json:"commit_id"`
+	CommitHash string `json:"commit_hash"` // hex SHA-256 of secret
+}
+
+// RandomRevealPayload reveals the secret for a previous commitment.
+type RandomRevealPayload struct {
+	CommitID string `json:"commit_id"`
+	Secret   string `json:"secret"`
 }
