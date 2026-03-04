@@ -146,7 +146,7 @@ func startTestNode(t *testing.T, w *wallet.Wallet) (rpcURL string, cleanup func(
 
 	// RPC on random port
 	handler := rpc.NewHandler(bc, mempool, stateDB, idx, testChainID)
-	rpcServer := rpc.NewServer(":0", handler, "", nil)
+	rpcServer := rpc.NewServer(":0", handler, "", nil, nil)
 	if err := rpcServer.Start(); err != nil {
 		t.Fatal(err)
 	}

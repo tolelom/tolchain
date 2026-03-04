@@ -1,7 +1,7 @@
 package events
 
 import (
-	"log"
+	"log/slog"
 	"sync"
 )
 
@@ -69,7 +69,7 @@ func (e *Emitter) Emit(ev Event) {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					log.Printf("[events] handler panicked for %s: %v", ev.Type, r)
+					slog.Error("event handler panicked", "type", ev.Type, "panic", r)
 				}
 			}()
 			h(ev)

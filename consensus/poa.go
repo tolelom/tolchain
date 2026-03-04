@@ -6,7 +6,8 @@ package consensus
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
+	"os"
 	"time"
 
 	"github.com/tolelom/tolchain/config"
@@ -104,7 +105,7 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 	var failedIDs []string
 	for _, tx := range candidates {
 		if txErr := p.exec.ExecuteTx(tmpBlock, tx); txErr != nil {
-			log.Printf("[consensus] skipping failed tx %s: %v", tx.ID, txErr)
+			slog.Warn("skipping failed tx", "component", "consensus", "tx_id", tx.ID, "error", txErr)
 			failedIDs = append(failedIDs, tx.ID)
 			continue
 		}
@@ -131,16 +132,16 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 		// Discard buffered events and rollback all state changes.
 		buf.Discard()
 		if revErr := p.state.RevertToSnapshot(blockSnapID); revErr != nil {
-			log.Fatalf("[consensus] FATAL: block %d AddBlock failed and snapshot revert failed: %v (add: %v)",
-				block.Header.Height, revErr, err)
+			slog.Error("FATAL: AddBlock failed and snapshot revert failed", "component", "consensus", "height", block.Header.Height, "revert_error", revErr, "add_error", err)
+			os.Exit(1)
 		}
 		return nil, fmt.Errorf("add block: %w", err)
 	}
 
 	// Flush state only after the block is safely stored.
 	if err := p.state.Commit(); err != nil {
-		log.Fatalf("[consensus] FATAL: block %d stored but state commit failed: %v",
-			block.Header.Height, err)
+		slog.Error("FATAL: block stored but state commit failed", "component", "consensus", "height", block.Header.Height, "error", err)
+		os.Exit(1)
 	}
 
 	// Flush buffered tx-level events now that the block is committed.
@@ -236,7 +237,7 @@ func (p *PoA) Run(interval time.Duration, done <-chan struct{}) {
 		case <-ticker.C:
 			if p.IsProposer() {
 				if _, err := p.ProduceBlock(); err != nil {
-					log.Printf("[consensus] produce block error: %v", err)
+					slog.Error("produce block error", "component", "consensus", "error", err)
 				}
 			}
 		}
