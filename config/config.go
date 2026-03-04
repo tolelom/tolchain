@@ -35,6 +35,7 @@ type Config struct {
 	P2PPort     int           `json:"p2p_port"`
 	MaxBlockTxs int           `json:"max_block_txs"` // max transactions per block; 0 → 500
 	Validators   []string      `json:"validators"`              // authorised proposer pubkey hexes
+	Operators    []string      `json:"operators,omitempty"`     // authorised game operator pubkey hexes (empty → no restriction)
 	Genesis      GenesisConfig `json:"genesis"`
 	SeedPeers    []SeedPeer    `json:"seed_peers,omitempty"`     // initial peers to connect to
 	TLS          *TLSConfig    `json:"tls,omitempty"`           // nil → plain TCP

@@ -23,6 +23,11 @@ func handleRegisterTemplate(ctx *vm.Context, payload json.RawMessage) error {
 		return errors.New("template id required")
 	}
 
+	// Operator restriction: only authorised operators can register templates.
+	if len(ctx.Operators) > 0 && !ctx.Operators[ctx.Tx.From] {
+		return errors.New("only authorised operators can register templates")
+	}
+
 	// Prevent overwriting an existing template
 	_, err := ctx.State.GetTemplate(p.ID)
 	if err == nil {

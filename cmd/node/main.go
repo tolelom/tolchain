@@ -82,6 +82,9 @@ func main() {
 		log.Fatalf("load key: %v", err)
 	}
 
+	// If using defaults (no config file), auto-register the loaded key.
+	ensureDevValidator(cfg, privKey.Public().Hex())
+
 	// ---- open DB ----
 	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
 		log.Fatalf("mkdir data dir: %v", err)
@@ -127,6 +130,7 @@ func main() {
 
 	// ---- VM executor ----
 	exec := vm.NewExecutor(state, emitter)
+	exec.SetOperators(cfg.Operators)
 
 	// ---- consensus ----
 	poa := consensus.New(cfg, bc, state, mempool, exec, emitter, privKey)
@@ -142,13 +146,20 @@ func main() {
 
 	// ---- network ----
 	p2pAddr := fmt.Sprintf(":%d", cfg.P2PPort)
-	node := network.NewNode(cfg.NodeID, p2pAddr, mempool, tlsCfg)
-	syncer := network.NewSyncer(node, bc, poa, exec, state)
+	node := network.NewNode(cfg.NodeID, p2pAddr, cfg.Genesis.ChainID, mempool, tlsCfg)
+	syncer := network.NewSyncer(node, bc, poa, exec, state, emitter, mempool)
 	if err := node.Start(); err != nil {
 		log.Fatalf("p2p start: %v", err)
 	}
 	defer node.Stop()
 	log.Printf("P2P listening on %s", p2pAddr)
+
+	// ---- broadcast committed blocks ----
+	emitter.Subscribe(events.EventBlockCommit, func(ev events.Event) {
+		if b, ok := ev.Data["block"].(*core.Block); ok && b != nil {
+			node.BroadcastBlock(b)
+		}
+	})
 
 	// ---- connect to seed peers ----
 	connectedSeeds := 0
@@ -209,10 +220,19 @@ func loadConfig(path string) (*config.Config, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			log.Printf("Config file not found at %s, using defaults.", path)
+			log.Printf("Config file not found at %s, using defaults (dev mode).", path)
 			return config.DefaultConfig(), nil
 		}
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// ensureDevValidator adds the loaded key as the sole validator when using the
+// default config (no config file). This prevents validation errors in dev mode.
+func ensureDevValidator(cfg *config.Config, pubKeyHex string) {
+	if len(cfg.Validators) == 0 {
+		cfg.Validators = []string{pubKeyHex}
+		log.Printf("Dev mode: auto-registered validator %s", pubKeyHex)
+	}
 }

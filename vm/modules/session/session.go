@@ -7,6 +7,7 @@ import (
 	"math"
 
 	"github.com/tolelom/tolchain/core"
+	"github.com/tolelom/tolchain/crypto"
 	"github.com/tolelom/tolchain/events"
 	"github.com/tolelom/tolchain/vm"
 )
@@ -14,6 +15,7 @@ import (
 func init() {
 	vm.Register(core.TxSessionOpen, handleSessionOpen)
 	vm.Register(core.TxSessionResult, handleSessionResult)
+	vm.Register(core.TxSessionCancel, handleSessionCancel)
 }
 
 func handleSessionOpen(ctx *vm.Context, payload json.RawMessage) error {
@@ -28,11 +30,38 @@ func handleSessionOpen(ctx *vm.Context, payload json.RawMessage) error {
 		return errors.New("at least one player required")
 	}
 
+	// Operator restriction: only authorised operators can open sessions.
+	if len(ctx.Operators) > 0 && !ctx.Operators[ctx.Tx.From] {
+		return errors.New("only authorised operators can open sessions")
+	}
+
 	// Check session doesn't already exist; distinguish DB errors from not-found.
 	if _, err := ctx.State.GetSession(p.SessionID); err == nil {
 		return fmt.Errorf("session %q already exists", p.SessionID)
 	} else if !errors.Is(err, core.ErrNotFound) {
 		return fmt.Errorf("checking session %q: %w", p.SessionID, err)
+	}
+
+	// When stakes are involved, verify that every player (except tx sender)
+	// has signed "session:<sessionID>" to prove consent.
+	if p.Stakes > 0 {
+		consentMsg := []byte("session:" + p.SessionID)
+		for _, player := range p.Players {
+			if player == ctx.Tx.From {
+				continue // the sender implicitly consents by submitting the tx
+			}
+			sig, ok := p.Signatures[player]
+			if !ok || sig == "" {
+				return fmt.Errorf("missing consent signature from player %q", player)
+			}
+			pub, err := crypto.PubKeyFromHex(player)
+			if err != nil {
+				return fmt.Errorf("invalid player pubkey %q: %w", player, err)
+			}
+			if err := crypto.Verify(pub, consentMsg, sig); err != nil {
+				return fmt.Errorf("invalid consent signature from player %q: %w", player, err)
+			}
+		}
 	}
 
 	// Lock stakes from each player
@@ -151,6 +180,62 @@ func handleSessionResult(ctx *vm.Context, payload json.RawMessage) error {
 	if ctx.Emitter != nil {
 		ctx.Emitter.Emit(events.Event{
 			Type:        events.EventSessionClose,
+			TxID:        ctx.Tx.ID,
+			BlockHeight: ctx.Block.Header.Height,
+			Data:        map[string]any{"session_id": p.SessionID},
+		})
+	}
+	return nil
+}
+
+func handleSessionCancel(ctx *vm.Context, payload json.RawMessage) error {
+	var p core.SessionCancelPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return fmt.Errorf("decode session_cancel payload: %w", err)
+	}
+
+	sess, err := ctx.State.GetSession(p.SessionID)
+	if err != nil {
+		return fmt.Errorf("session %q not found: %w", p.SessionID, err)
+	}
+	if sess.Status != "open" {
+		return fmt.Errorf("session %q is not open (status=%s)", p.SessionID, sess.Status)
+	}
+	if ctx.Tx.From != sess.Creator {
+		return errors.New("only the session creator can cancel it")
+	}
+
+	// Operator restriction.
+	if len(ctx.Operators) > 0 && !ctx.Operators[ctx.Tx.From] {
+		return errors.New("only authorised operators can cancel sessions")
+	}
+
+	// Refund stakes to all players.
+	if sess.Stakes > 0 {
+		for _, player := range sess.Players {
+			acc, err := ctx.State.GetAccount(player)
+			if err != nil {
+				return fmt.Errorf("player %q account: %w", player, err)
+			}
+			if acc.Balance > math.MaxUint64-sess.Stakes {
+				return fmt.Errorf("player %q balance overflow on refund", player)
+			}
+			acc.Balance += sess.Stakes
+			if err := ctx.State.SetAccount(acc); err != nil {
+				return err
+			}
+		}
+	}
+
+	sess.Status = "cancelled"
+	sess.ClosedAt = ctx.Block.Header.Timestamp
+	if err := ctx.State.SetSession(sess); err != nil {
+		return err
+	}
+
+	if ctx.Emitter != nil {
+		ctx.Emitter.Emit(events.Event{
+			Type:        events.EventSessionCancel,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
 			Data:        map[string]any{"session_id": p.SessionID},

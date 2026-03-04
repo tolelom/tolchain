@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/tolelom/tolchain/core"
+	"github.com/tolelom/tolchain/events"
 )
 
 // GetBlocksRequest asks a peer for blocks starting at FromHeight.
@@ -26,6 +27,7 @@ type BlockValidator interface {
 // BlockExecutor applies all transactions in a block against the state.
 type BlockExecutor interface {
 	ExecuteBlock(block *core.Block) error
+	SetEmitter(em events.EventEmitter)
 }
 
 // Syncer handles block synchronisation between nodes.
@@ -35,13 +37,15 @@ type Syncer struct {
 	validator BlockValidator
 	exec      BlockExecutor // may be nil; if set, state is also required
 	state     core.State    // may be nil; used with exec to commit after each block
+	emitter   events.EventEmitter
+	mempool   *core.Mempool // may be nil; used to remove committed txs after sync
 }
 
 // NewSyncer creates a Syncer that requests missing blocks from peers.
 // Pass non-nil exec and state so that synced blocks are fully applied to the
 // local state; without them the node will have blocks but no account/asset state.
-func NewSyncer(node *Node, bc *core.Blockchain, validator BlockValidator, exec BlockExecutor, state core.State) *Syncer {
-	s := &Syncer{node: node, bc: bc, validator: validator, exec: exec, state: state}
+func NewSyncer(node *Node, bc *core.Blockchain, validator BlockValidator, exec BlockExecutor, state core.State, emitter events.EventEmitter, mempool *core.Mempool) *Syncer {
+	s := &Syncer{node: node, bc: bc, validator: validator, exec: exec, state: state, emitter: emitter, mempool: mempool}
 	node.Handle(MsgHello, s.handleHello)
 	node.Handle(MsgGetBlocks, s.handleGetBlocks)
 	node.Handle(MsgBlocks, s.handleBlocks)
@@ -115,6 +119,7 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 
 		// Take a snapshot so we can revert if AddBlock fails.
 		var snapID int
+		var buf *events.Buffer
 		if s.exec != nil && s.state != nil {
 			var err error
 			snapID, err = s.state.Snapshot()
@@ -122,19 +127,27 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 				log.Printf("[sync] block %d snapshot failed: %v", b.Header.Height, err)
 				continue
 			}
+			// Buffer events during execution so they are only delivered
+			// after a successful commit.
+			buf = events.NewBuffer()
+			s.exec.SetEmitter(buf)
 			if err := s.exec.ExecuteBlock(b); err != nil {
+				s.exec.SetEmitter(s.emitter)
+				buf.Discard()
 				if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
 					log.Fatalf("[sync] FATAL: block %d revert failed after exec error: %v (exec: %v)", b.Header.Height, revErr, err)
 				}
 				log.Printf("[sync] block %d execution failed: %v", b.Header.Height, err)
 				continue
 			}
+			s.exec.SetEmitter(s.emitter)
 		}
 
 		// (A) Verify state root matches after execution.
 		if s.exec != nil && s.state != nil {
 			computedRoot := s.state.ComputeRoot()
 			if b.Header.StateRoot != "" && computedRoot != b.Header.StateRoot {
+				buf.Discard()
 				if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
 					log.Fatalf("[sync] FATAL: block %d revert failed after state root mismatch: %v", b.Header.Height, revErr)
 				}
@@ -145,6 +158,7 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 
 		if err := s.bc.AddBlock(b); err != nil {
 			if s.exec != nil && s.state != nil {
+				buf.Discard()
 				if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
 					log.Fatalf("[sync] FATAL: block %d revert failed after add error: %v (add: %v)", b.Header.Height, revErr, err)
 				}
@@ -157,6 +171,19 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 			if err := s.state.Commit(); err != nil {
 				log.Fatalf("[sync] FATAL: block %d state commit failed: %v", b.Header.Height, err)
 			}
+			// Flush buffered events now that the block is committed.
+			if buf != nil {
+				buf.Flush(s.emitter)
+			}
+		}
+
+		// Remove synced transactions from the mempool.
+		if s.mempool != nil && len(b.Transactions) > 0 {
+			txIDs := make([]string, len(b.Transactions))
+			for i, tx := range b.Transactions {
+				txIDs[i] = tx.ID
+			}
+			s.mempool.Remove(txIDs)
 		}
 	}
 

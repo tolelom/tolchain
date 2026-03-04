@@ -31,6 +31,7 @@ func New(db storage.DB, emitter *events.Emitter) *Indexer {
 	emitter.Subscribe(events.EventAssetTransfer, idx.onAssetTransferred)
 	emitter.Subscribe(events.EventAssetBurned, idx.onAssetBurned)
 	emitter.Subscribe(events.EventSessionOpen, idx.onSessionOpen)
+	emitter.Subscribe(events.EventMarketBuy, idx.onMarketBuy)
 	return idx
 }
 
@@ -96,6 +97,21 @@ func (idx *Indexer) onSessionOpen(ev events.Event) {
 				log.Printf("[indexer] session index write failed (player=%s session=%s): %v", player, sessionID, err)
 			}
 		}
+	}
+}
+
+func (idx *Indexer) onMarketBuy(ev events.Event) {
+	seller, _ := ev.Data["seller"].(string)
+	buyer, _ := ev.Data["buyer"].(string)
+	assetID, _ := ev.Data["asset_id"].(string)
+	if assetID == "" || seller == "" || buyer == "" {
+		return
+	}
+	if err := idx.removeFromList(prefixOwnerAssets+seller, assetID); err != nil {
+		log.Printf("[indexer] market buy remove failed (seller=%s asset=%s): %v", seller, assetID, err)
+	}
+	if err := idx.addToList(prefixOwnerAssets+buyer, assetID); err != nil {
+		log.Printf("[indexer] market buy add failed (buyer=%s asset=%s): %v", buyer, assetID, err)
 	}
 }
 

@@ -41,6 +41,11 @@ func handleMintAsset(ctx *vm.Context, payload json.RawMessage) error {
 		}
 	}
 
+	// Validate properties against template schema.
+	if err := validateSchema(tmpl.Schema, p.Properties); err != nil {
+		return fmt.Errorf("schema validation: %w", err)
+	}
+
 	// Deterministic asset ID: hash of tx ID + template
 	assetID := crypto.Hash([]byte(ctx.Tx.ID + ":asset:" + p.TemplateID))
 
@@ -138,6 +143,56 @@ func handleTransferAsset(ctx *vm.Context, payload json.RawMessage) error {
 			BlockHeight: ctx.Block.Header.Height,
 			Data:        map[string]any{"asset_id": p.AssetID, "from": ctx.Tx.From, "to": p.To},
 		})
+	}
+	return nil
+}
+
+// validateSchema checks that properties conform to the template schema.
+// Supported schema types: "string", "int", "bool". Extra properties not in
+// the schema are rejected. An empty/nil schema allows any properties.
+func validateSchema(schema map[string]any, properties map[string]any) error {
+	if len(schema) == 0 {
+		return nil
+	}
+	// Reject properties not defined in the schema.
+	for key := range properties {
+		if _, ok := schema[key]; !ok {
+			return fmt.Errorf("property %q not defined in template schema", key)
+		}
+	}
+	// Validate types for each schema field.
+	for key, typHint := range schema {
+		val, ok := properties[key]
+		if !ok {
+			continue // missing properties are optional
+		}
+		expected, _ := typHint.(string)
+		switch expected {
+		case "string":
+			if _, ok := val.(string); !ok {
+				return fmt.Errorf("property %q must be a string", key)
+			}
+		case "int":
+			// JSON numbers decode as float64.
+			switch v := val.(type) {
+			case float64:
+				if v != float64(int64(v)) {
+					return fmt.Errorf("property %q must be an integer", key)
+				}
+			case json.Number:
+				if _, err := v.Int64(); err != nil {
+					return fmt.Errorf("property %q must be an integer", key)
+				}
+			default:
+				return fmt.Errorf("property %q must be an integer", key)
+			}
+		case "bool":
+			if _, ok := val.(bool); !ok {
+				return fmt.Errorf("property %q must be a bool", key)
+			}
+		default:
+			// Unknown schema type hint — skip validation for this field.
+		}
 	}
 	return nil
 }

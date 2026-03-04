@@ -22,6 +22,7 @@ const DefaultMaxPeers = 50
 type Node struct {
 	nodeID     string
 	listenAddr string
+	chainID    string
 	mempool    *core.Mempool
 	tlsConfig  *tls.Config // nil → plain TCP
 	maxPeers   int
@@ -36,10 +37,11 @@ type Node struct {
 
 // NewNode creates a Node that will listen on listenAddr.
 // If tlsCfg is non-nil the listener and outgoing connections use TLS.
-func NewNode(nodeID, listenAddr string, mempool *core.Mempool, tlsCfg *tls.Config) *Node {
+func NewNode(nodeID, listenAddr, chainID string, mempool *core.Mempool, tlsCfg *tls.Config) *Node {
 	n := &Node{
 		nodeID:     nodeID,
 		listenAddr: listenAddr,
+		chainID:    chainID,
 		mempool:    mempool,
 		tlsConfig:  tlsCfg,
 		maxPeers:   DefaultMaxPeers,
@@ -49,6 +51,7 @@ func NewNode(nodeID, listenAddr string, mempool *core.Mempool, tlsCfg *tls.Confi
 	}
 	// Register default handlers
 	n.Handle(MsgTx, n.handleTx)
+	n.Handle(MsgPing, n.handlePing)
 	return n
 }
 
@@ -213,7 +216,17 @@ func (n *Node) handleTx(_ *Peer, msg Message) {
 		log.Printf("[network] unmarshal tx: %v", err)
 		return
 	}
+	if n.chainID != "" && tx.ChainID != n.chainID {
+		log.Printf("[network] rejecting tx %s: chain_id %q != %q", tx.ID, tx.ChainID, n.chainID)
+		return
+	}
 	if err := n.mempool.Add(&tx); err != nil {
 		log.Printf("[network] mempool add: %v", err)
+	}
+}
+
+func (n *Node) handlePing(peer *Peer, _ Message) {
+	if err := peer.Send(Message{Type: MsgPong}); err != nil {
+		log.Printf("[network] pong to %s: %v", peer.ID, err)
 	}
 }

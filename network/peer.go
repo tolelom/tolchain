@@ -22,6 +22,8 @@ const (
 	MsgBlock     MsgType = "block"
 	MsgGetBlocks MsgType = "get_blocks"
 	MsgBlocks    MsgType = "blocks"
+	MsgPing      MsgType = "ping"
+	MsgPong      MsgType = "pong"
 )
 
 // Message is the envelope for all P2P communication.
@@ -86,9 +88,9 @@ func (p *Peer) Send(msg Message) error {
 }
 
 // Receive reads the next length-prefixed JSON message.
-// A 30-second read deadline prevents a stalled peer from blocking indefinitely.
+// A 5-minute read deadline prevents a stalled peer from blocking indefinitely.
 func (p *Peer) Receive() (Message, error) {
-	if err := p.conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+	if err := p.conn.SetReadDeadline(time.Now().Add(5 * time.Minute)); err != nil {
 		return Message{}, fmt.Errorf("set read deadline: %w", err)
 	}
 	var header [4]byte
