@@ -1,0 +1,59 @@
+name: Tolchain CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Go 설정
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: 정적 분석
+        run: go vet ./...
+
+      - name: 테스트
+        run: go test ./...
+
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      - name: GHCR 로그인
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker 이미지 빌드 & Push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/tolchain:latest
+          platforms: linux/arm64
+
+      - name: 서버에 배포
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            export PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.docker/bin
+            cd ~/server
+            docker compose pull tolchain
+            docker compose up -d tolchain

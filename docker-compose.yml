@@ -1,0 +1,14 @@
+services:
+  tolchain:
+    image: ghcr.io/tolelom/tolchain:latest
+    container_name: tolchain-node
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8545:8545"
+      - "30303:30303"
+    volumes:
+      - ./data:/home/tol/data
+      - ./config.json:/home/tol/config.json:ro
+      - ./validator.key:/home/tol/validator.key:ro
+    command: ["--config", "config.json", "--key", "validator.key"]
