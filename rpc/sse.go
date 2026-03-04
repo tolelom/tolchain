@@ -3,7 +3,7 @@ package rpc
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -102,7 +102,7 @@ func (b *SSEBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case ev := <-ch:
 			data, err := json.Marshal(ev)
 			if err != nil {
-				log.Printf("[sse] marshal event: %v", err)
+				slog.Error("SSE marshal event failed", "error", err)
 				continue
 			}
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, data)

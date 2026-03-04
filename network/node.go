@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -106,11 +106,11 @@ func (n *Node) AddPeer(id, addr string) error {
 	// Send hello
 	hello, err := json.Marshal(map[string]string{"node_id": n.nodeID})
 	if err != nil {
-		log.Printf("[network] marshal hello: %v", err)
+		slog.Error("marshal hello", "component", "network", "error", err)
 		return nil
 	}
 	if err := peer.Send(Message{Type: MsgHello, Payload: hello}); err != nil {
-		log.Printf("[network] send hello to %s: %v", id, err)
+		slog.Error("send hello", "component", "network", "peer", id, "error", err)
 	}
 	return nil
 }
@@ -120,6 +120,18 @@ func (n *Node) Peer(id string) *Peer {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.peers[id]
+}
+
+// Listener returns the underlying net.Listener. Useful for getting the bound address when started on ":0".
+func (n *Node) Listener() net.Listener {
+	return n.listener
+}
+
+// PeerCount returns the number of currently connected peers.
+func (n *Node) PeerCount() int {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return len(n.peers)
 }
 
 // Broadcast sends msg to all connected peers.
@@ -132,7 +144,7 @@ func (n *Node) Broadcast(msg Message) {
 	n.mu.RUnlock()
 	for _, p := range peers {
 		if err := p.Send(msg); err != nil {
-			log.Printf("[network] broadcast to %s: %v", p.ID, err)
+			slog.Error("broadcast failed", "component", "network", "peer", p.ID, "error", err)
 		}
 	}
 }
@@ -141,7 +153,7 @@ func (n *Node) Broadcast(msg Message) {
 func (n *Node) BroadcastTx(tx *core.Transaction) {
 	data, err := json.Marshal(tx)
 	if err != nil {
-		log.Printf("[network] marshal tx: %v", err)
+		slog.Error("marshal tx", "component", "network", "error", err)
 		return
 	}
 	n.Broadcast(Message{Type: MsgTx, Payload: data})
@@ -151,7 +163,7 @@ func (n *Node) BroadcastTx(tx *core.Transaction) {
 func (n *Node) BroadcastBlock(block *core.Block) {
 	data, err := json.Marshal(block)
 	if err != nil {
-		log.Printf("[network] marshal block: %v", err)
+		slog.Error("marshal block", "component", "network", "error", err)
 		return
 	}
 	n.Broadcast(Message{Type: MsgBlock, Payload: data})
@@ -165,7 +177,7 @@ func (n *Node) acceptLoop() {
 			case <-n.stopCh:
 				return
 			default:
-				log.Printf("[network] accept error: %v", err)
+				slog.Error("accept error", "component", "network", "error", err)
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
@@ -174,7 +186,7 @@ func (n *Node) acceptLoop() {
 		peerCount := len(n.peers)
 		n.mu.RUnlock()
 		if peerCount >= n.maxPeers {
-			log.Printf("[network] max peers (%d) reached, rejecting %s", n.maxPeers, conn.RemoteAddr())
+			slog.Warn("max peers reached, rejecting connection", "component", "network", "max_peers", n.maxPeers, "remote", conn.RemoteAddr())
 			conn.Close()
 			continue
 		}
@@ -189,7 +201,7 @@ func (n *Node) acceptLoop() {
 func (n *Node) readLoop(peer *Peer) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("[network] readLoop panic from %s: %v", peer.ID, r)
+			slog.Error("readLoop panic", "component", "network", "peer", peer.ID, "panic", r)
 		}
 		peer.Close()
 		n.mu.Lock()
@@ -213,20 +225,20 @@ func (n *Node) readLoop(peer *Peer) {
 func (n *Node) handleTx(_ *Peer, msg Message) {
 	var tx core.Transaction
 	if err := json.Unmarshal(msg.Payload, &tx); err != nil {
-		log.Printf("[network] unmarshal tx: %v", err)
+		slog.Error("unmarshal tx", "component", "network", "error", err)
 		return
 	}
 	if n.chainID != "" && tx.ChainID != n.chainID {
-		log.Printf("[network] rejecting tx %s: chain_id %q != %q", tx.ID, tx.ChainID, n.chainID)
+		slog.Warn("rejecting tx: chain_id mismatch", "component", "network", "tx_id", tx.ID, "got", tx.ChainID, "want", n.chainID)
 		return
 	}
 	if err := n.mempool.Add(&tx); err != nil {
-		log.Printf("[network] mempool add: %v", err)
+		slog.Error("mempool add", "component", "network", "error", err)
 	}
 }
 
 func (n *Node) handlePing(peer *Peer, _ Message) {
 	if err := peer.Send(Message{Type: MsgPong}); err != nil {
-		log.Printf("[network] pong to %s: %v", peer.ID, err)
+		slog.Error("pong failed", "component", "network", "peer", peer.ID, "error", err)
 	}
 }

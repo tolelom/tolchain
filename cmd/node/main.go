@@ -4,7 +4,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"sync"
@@ -34,6 +34,10 @@ import (
 )
 
 func main() {
+	// Initialize structured JSON logging.
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	startTime := time.Now()
+
 	cfgPath := flag.String("config", "config.json", "path to config file")
 	keyPath := flag.String("key", "validator.key", "path to keystore file")
 	genKey := flag.Bool("genkey", false, "generate a new validator key and exit")
@@ -43,17 +47,19 @@ func main() {
 	// Read keystore password from environment (not CLI flags — they leak via ps).
 	password := os.Getenv("TOL_PASSWORD")
 	if password == "" {
-		log.Println("WARNING: TOL_PASSWORD not set — keystore will use an empty password")
+		slog.Warn("TOL_PASSWORD not set — keystore will use an empty password")
 	}
 
 	// ---- generate key mode ----
 	if *genKey {
 		w, err := wallet.Generate()
 		if err != nil {
-			log.Fatal(err)
+			slog.Error("generate key failed", "error", err)
+			os.Exit(1)
 		}
 		if err := wallet.SaveKey(*keyPath, password, w.PrivKey()); err != nil {
-			log.Fatal(err)
+			slog.Error("save key failed", "error", err)
+			os.Exit(1)
 		}
 		fmt.Printf("Generated key. Public key (validator address): %s\n", w.PubKey())
 		fmt.Printf("Saved to: %s\n", *keyPath)
@@ -64,10 +70,12 @@ func main() {
 	if *genCerts != "" {
 		cfgForCerts, err := loadConfig(*cfgPath)
 		if err != nil {
-			log.Fatalf("config: %v", err)
+			slog.Error("config load failed", "error", err)
+			os.Exit(1)
 		}
 		if err := certgen.GenerateAll(*genCerts, cfgForCerts.NodeID, nil); err != nil {
-			log.Fatalf("gencerts: %v", err)
+			slog.Error("gencerts failed", "error", err)
+			os.Exit(1)
 		}
 		fmt.Printf("Certificates generated in %s for node %q\n", *genCerts, cfgForCerts.NodeID)
 		return
@@ -76,13 +84,15 @@ func main() {
 	// ---- load config ----
 	cfg, err := loadConfig(*cfgPath)
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		slog.Error("config load failed", "error", err)
+		os.Exit(1)
 	}
 
 	// ---- load validator key ----
 	privKey, err := wallet.LoadKey(*keyPath, password)
 	if err != nil {
-		log.Fatalf("load key: %v", err)
+		slog.Error("load key failed", "error", err)
+		os.Exit(1)
 	}
 
 	// If using defaults (no config file), auto-register the loaded key.
@@ -90,11 +100,13 @@ func main() {
 
 	// ---- open DB ----
 	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
-		log.Fatalf("mkdir data dir: %v", err)
+		slog.Error("mkdir data dir failed", "error", err)
+		os.Exit(1)
 	}
 	db, err := storage.NewLevelDB(cfg.DataDir + "/chain")
 	if err != nil {
-		log.Fatalf("open db: %v", err)
+		slog.Error("open db failed", "error", err)
+		os.Exit(1)
 	}
 	defer db.Close()
 
@@ -107,19 +119,22 @@ func main() {
 	// ---- initialise blockchain ----
 	bc := core.NewBlockchain(blockStore)
 	if err := bc.Init(); err != nil {
-		log.Fatalf("blockchain init: %v", err)
+		slog.Error("blockchain init failed", "error", err)
+		os.Exit(1)
 	}
 
 	// ---- genesis block (if fresh chain) ----
 	if bc.Tip() == nil {
 		genesisBlock, err := config.CreateGenesisBlock(cfg, state, privKey)
 		if err != nil {
-			log.Fatalf("genesis: %v", err)
+			slog.Error("genesis creation failed", "error", err)
+			os.Exit(1)
 		}
 		if err := bc.AddBlock(genesisBlock); err != nil {
-			log.Fatalf("add genesis: %v", err)
+			slog.Error("add genesis failed", "error", err)
+			os.Exit(1)
 		}
-		log.Printf("Genesis block committed: %s", genesisBlock.Hash)
+		slog.Info("genesis block committed", "hash", genesisBlock.Hash)
 	}
 
 	// ---- events ----
@@ -141,10 +156,11 @@ func main() {
 	// ---- TLS ----
 	tlsCfg, err := config.LoadTLSConfig(cfg.TLS)
 	if err != nil {
-		log.Fatalf("tls: %v", err)
+		slog.Error("tls config failed", "error", err)
+		os.Exit(1)
 	}
 	if tlsCfg != nil {
-		log.Println("mTLS enabled for P2P")
+		slog.Info("mTLS enabled for P2P")
 	}
 
 	// ---- network ----
@@ -152,10 +168,11 @@ func main() {
 	node := network.NewNode(cfg.NodeID, p2pAddr, cfg.Genesis.ChainID, mempool, tlsCfg)
 	syncer := network.NewSyncer(node, bc, poa, exec, state, emitter, mempool)
 	if err := node.Start(); err != nil {
-		log.Fatalf("p2p start: %v", err)
+		slog.Error("p2p start failed", "error", err)
+		os.Exit(1)
 	}
 	defer node.Stop()
-	log.Printf("P2P listening on %s", p2pAddr)
+	slog.Info("P2P listening", "addr", p2pAddr)
 
 	// ---- broadcast committed blocks ----
 	emitter.Subscribe(events.EventBlockCommit, func(ev events.Event) {
@@ -168,7 +185,7 @@ func main() {
 	connectedSeeds := 0
 	for _, sp := range cfg.SeedPeers {
 		if err := node.AddPeer(sp.ID, sp.Addr); err != nil {
-			log.Printf("seed peer %s (%s): %v", sp.ID, sp.Addr, err)
+			slog.Warn("seed peer connection failed", "peer_id", sp.ID, "addr", sp.Addr, "error", err)
 			continue
 		}
 		// Trigger initial block sync with the newly connected peer.
@@ -176,24 +193,44 @@ func main() {
 			syncer.SyncWithPeer(peer)
 		}
 		connectedSeeds++
-		log.Printf("Connected to seed peer %s (%s)", sp.ID, sp.Addr)
+		slog.Info("connected to seed peer", "peer_id", sp.ID, "addr", sp.Addr)
 	}
 	if len(cfg.SeedPeers) > 0 && connectedSeeds == 0 {
-		log.Println("WARNING: failed to connect to any seed peer — node is isolated")
+		slog.Warn("failed to connect to any seed peer — node is isolated")
 	}
 
 	// ---- RPC ----
 	rpcAddr := fmt.Sprintf(":%d", cfg.RPCPort)
 	rpcHandler := rpc.NewHandler(bc, mempool, state, idx, cfg.Genesis.ChainID)
 	sseBroker := rpc.NewSSEBroker(emitter, cfg.RPCAuthToken)
-	rpcServer := rpc.NewServer(rpcAddr, rpcHandler, cfg.RPCAuthToken, sseBroker)
+	statusFunc := func() any {
+		tip := bc.Tip()
+		var blockHeight int64
+		var blockHash string
+		if tip != nil {
+			blockHeight = tip.Header.Height
+			blockHash = tip.Hash
+		}
+		return map[string]any{
+			"node_id":        cfg.NodeID,
+			"chain_id":       cfg.Genesis.ChainID,
+			"block_height":   blockHeight,
+			"block_hash":     blockHash,
+			"peer_count":     node.PeerCount(),
+			"mempool_size":   mempool.Size(),
+			"uptime_seconds": int(time.Since(startTime).Seconds()),
+			"version":        "0.1.0",
+		}
+	}
+	rpcServer := rpc.NewServer(rpcAddr, rpcHandler, cfg.RPCAuthToken, sseBroker, statusFunc)
 	if err := rpcServer.Start(); err != nil {
-		log.Fatalf("rpc start: %v", err)
+		slog.Error("rpc start failed", "error", err)
+		os.Exit(1)
 	}
 	defer rpcServer.Stop()
-	log.Printf("RPC listening on %s", rpcAddr)
+	slog.Info("RPC listening", "addr", rpcAddr)
 	if cfg.RPCAuthToken != "" {
-		log.Println("RPC Bearer token authentication enabled")
+		slog.Info("RPC Bearer token authentication enabled")
 	}
 
 	// ---- consensus loop ----
@@ -204,27 +241,27 @@ func main() {
 		defer wg.Done()
 		poa.Run(2*time.Second, done)
 	}()
-	log.Printf("Consensus running (validator: %s)", privKey.Public().Hex())
+	slog.Info("consensus running", "validator", privKey.Public().Hex())
 
 	// ---- graceful shutdown ----
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
-	log.Println("Shutting down...")
+	slog.Info("shutting down...")
 
 	// 1. Stop consensus first (no new blocks written)
 	close(done)
 	wg.Wait()
 
 	// 2. Deferred calls run in LIFO: rpcServer.Stop → node.Stop → db.Close
-	log.Println("Shutdown complete.")
+	slog.Info("shutdown complete")
 }
 
 func loadConfig(path string) (*config.Config, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			log.Printf("Config file not found at %s, using defaults (dev mode).", path)
+			slog.Info("config file not found, using defaults (dev mode)", "path", path)
 			return config.DefaultConfig(), nil
 		}
 		return nil, err
@@ -237,6 +274,6 @@ func loadConfig(path string) (*config.Config, error) {
 func ensureDevValidator(cfg *config.Config, pubKeyHex string) {
 	if len(cfg.Validators) == 0 {
 		cfg.Validators = []string{pubKeyHex}
-		log.Printf("Dev mode: auto-registered validator %s", pubKeyHex)
+		slog.Info("dev mode: auto-registered validator", "pubkey", pubKeyHex)
 	}
 }

@@ -2,7 +2,8 @@ package network
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
+	"os"
 
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/events"
@@ -56,7 +57,7 @@ func NewSyncer(node *Node, bc *core.Blockchain, validator BlockValidator, exec B
 func (s *Syncer) handleHello(peer *Peer, _ Message) {
 	fromHeight := s.bc.Height() + 1
 	if err := s.RequestBlocks(peer, fromHeight); err != nil {
-		log.Printf("[sync] failed to request blocks from %s: %v", peer.ID, err)
+		slog.Error("failed to request blocks", "component", "sync", "peer", peer.ID, "error", err)
 	}
 }
 
@@ -65,7 +66,7 @@ func (s *Syncer) handleHello(peer *Peer, _ Message) {
 func (s *Syncer) SyncWithPeer(peer *Peer) {
 	fromHeight := s.bc.Height() + 1
 	if err := s.RequestBlocks(peer, fromHeight); err != nil {
-		log.Printf("[sync] failed to request blocks from %s: %v", peer.ID, err)
+		slog.Error("failed to request blocks", "component", "sync", "peer", peer.ID, "error", err)
 	}
 }
 
@@ -96,11 +97,11 @@ func (s *Syncer) handleGetBlocks(peer *Peer, msg Message) {
 	}
 	data, err := json.Marshal(BlocksResponse{Blocks: blocks})
 	if err != nil {
-		log.Printf("[sync] marshal blocks response: %v", err)
+		slog.Error("marshal blocks response", "component", "sync", "error", err)
 		return
 	}
 	if err := peer.Send(Message{Type: MsgBlocks, Payload: data}); err != nil {
-		log.Printf("[sync] send blocks to %s: %v", peer.ID, err)
+		slog.Error("send blocks failed", "component", "sync", "peer", peer.ID, "error", err)
 	}
 }
 
@@ -112,7 +113,7 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 	for _, b := range resp.Blocks {
 		if s.validator != nil {
 			if err := s.validator.ValidateBlock(b); err != nil {
-				log.Printf("[sync] block %d validation failed: %v", b.Header.Height, err)
+				slog.Error("block validation failed", "component", "sync", "height", b.Header.Height, "error", err)
 				return // stop processing blocks from this peer
 			}
 		}
@@ -124,7 +125,7 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 			var err error
 			snapID, err = s.state.Snapshot()
 			if err != nil {
-				log.Printf("[sync] block %d snapshot failed: %v", b.Header.Height, err)
+				slog.Error("block snapshot failed", "component", "sync", "height", b.Header.Height, "error", err)
 				continue
 			}
 			// Buffer events during execution so they are only delivered
@@ -135,9 +136,10 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 				s.exec.SetEmitter(s.emitter)
 				buf.Discard()
 				if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
-					log.Fatalf("[sync] FATAL: block %d revert failed after exec error: %v (exec: %v)", b.Header.Height, revErr, err)
+					slog.Error("FATAL: revert failed after exec error", "component", "sync", "height", b.Header.Height, "revert_error", revErr, "exec_error", err)
+				os.Exit(1)
 				}
-				log.Printf("[sync] block %d execution failed: %v", b.Header.Height, err)
+				slog.Error("block execution failed", "component", "sync", "height", b.Header.Height, "error", err)
 				continue
 			}
 			s.exec.SetEmitter(s.emitter)
@@ -149,9 +151,10 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 			if b.Header.StateRoot != "" && computedRoot != b.Header.StateRoot {
 				buf.Discard()
 				if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
-					log.Fatalf("[sync] FATAL: block %d revert failed after state root mismatch: %v", b.Header.Height, revErr)
+					slog.Error("FATAL: revert failed after state root mismatch", "component", "sync", "height", b.Header.Height, "error", revErr)
+				os.Exit(1)
 				}
-				log.Printf("[sync] block %d state root mismatch: computed %s want %s", b.Header.Height, computedRoot, b.Header.StateRoot)
+				slog.Error("block state root mismatch", "component", "sync", "height", b.Header.Height, "computed", computedRoot, "want", b.Header.StateRoot)
 				return
 			}
 		}
@@ -160,16 +163,18 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 			if s.exec != nil && s.state != nil {
 				buf.Discard()
 				if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
-					log.Fatalf("[sync] FATAL: block %d revert failed after add error: %v (add: %v)", b.Header.Height, revErr, err)
+					slog.Error("FATAL: revert failed after add error", "component", "sync", "height", b.Header.Height, "revert_error", revErr, "add_error", err)
+				os.Exit(1)
 				}
 			}
-			log.Printf("[sync] block %d add failed: %v", b.Header.Height, err)
+			slog.Error("block add failed", "component", "sync", "height", b.Header.Height, "error", err)
 			continue
 		}
 
 		if s.exec != nil && s.state != nil {
 			if err := s.state.Commit(); err != nil {
-				log.Fatalf("[sync] FATAL: block %d state commit failed: %v", b.Header.Height, err)
+				slog.Error("FATAL: block state commit failed", "component", "sync", "height", b.Header.Height, "error", err)
+			os.Exit(1)
 			}
 			// Flush buffered events now that the block is committed.
 			if buf != nil {
@@ -191,7 +196,7 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 	if len(resp.Blocks) >= 50 {
 		nextHeight := s.bc.Height() + 1
 		if err := s.RequestBlocks(peer, nextHeight); err != nil {
-			log.Printf("[sync] follow-up request to %s failed: %v", peer.ID, err)
+			slog.Error("follow-up request failed", "component", "sync", "peer", peer.ID, "error", err)
 		}
 	}
 }

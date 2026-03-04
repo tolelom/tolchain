@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/events"
@@ -149,7 +149,7 @@ func (idx *Indexer) onAssetMinted(ev events.Event) {
 		return
 	}
 	if err := idx.addToList(prefixOwnerAssets+owner, assetID); err != nil {
-		log.Printf("[indexer] mint index write failed (owner=%s asset=%s): %v", owner, assetID, err)
+		slog.Error("mint index write failed", "component", "indexer", "owner", owner, "asset_id", assetID, "error", err)
 	}
 }
 
@@ -161,10 +161,10 @@ func (idx *Indexer) onAssetTransferred(ev events.Event) {
 		return
 	}
 	if err := idx.removeFromList(prefixOwnerAssets+from, assetID); err != nil {
-		log.Printf("[indexer] transfer remove failed (from=%s asset=%s): %v", from, assetID, err)
+		slog.Error("transfer remove failed", "component", "indexer", "from", from, "asset_id", assetID, "error", err)
 	}
 	if err := idx.addToList(prefixOwnerAssets+to, assetID); err != nil {
-		log.Printf("[indexer] transfer add failed (to=%s asset=%s): %v", to, assetID, err)
+		slog.Error("transfer add failed", "component", "indexer", "to", to, "asset_id", assetID, "error", err)
 	}
 }
 
@@ -175,7 +175,7 @@ func (idx *Indexer) onAssetBurned(ev events.Event) {
 		return
 	}
 	if err := idx.removeFromList(prefixOwnerAssets+owner, assetID); err != nil {
-		log.Printf("[indexer] burn remove failed (owner=%s asset=%s): %v", owner, assetID, err)
+		slog.Error("burn remove failed", "component", "indexer", "owner", owner, "asset_id", assetID, "error", err)
 	}
 }
 
@@ -189,7 +189,7 @@ func (idx *Indexer) onSessionOpen(ev events.Event) {
 		player, _ := p.(string)
 		if player != "" {
 			if err := idx.addToList(prefixPlayerSession+player, sessionID); err != nil {
-				log.Printf("[indexer] session index write failed (player=%s session=%s): %v", player, sessionID, err)
+				slog.Error("session index write failed", "component", "indexer", "player", player, "session_id", sessionID, "error", err)
 			}
 		}
 	}
@@ -204,14 +204,14 @@ func (idx *Indexer) onMarketBuy(ev events.Event) {
 		return
 	}
 	if err := idx.removeFromList(prefixOwnerAssets+seller, assetID); err != nil {
-		log.Printf("[indexer] market buy remove failed (seller=%s asset=%s): %v", seller, assetID, err)
+		slog.Error("market buy remove failed", "component", "indexer", "seller", seller, "asset_id", assetID, "error", err)
 	}
 	if err := idx.addToList(prefixOwnerAssets+buyer, assetID); err != nil {
-		log.Printf("[indexer] market buy add failed (buyer=%s asset=%s): %v", buyer, assetID, err)
+		slog.Error("market buy add failed", "component", "indexer", "buyer", buyer, "asset_id", assetID, "error", err)
 	}
 	if listingID != "" {
 		if err := idx.removeFromList(keyActiveListings, listingID); err != nil {
-			log.Printf("[indexer] market buy listing remove failed (listing=%s): %v", listingID, err)
+			slog.Error("market buy listing remove failed", "component", "indexer", "listing_id", listingID, "error", err)
 		}
 	}
 }
@@ -230,11 +230,11 @@ func (idx *Indexer) onTxExecuted(ev events.Event) {
 	}
 	data, err := json.Marshal(result)
 	if err != nil {
-		log.Printf("[indexer] tx result marshal failed (tx=%s): %v", ev.TxID, err)
+		slog.Error("tx result marshal failed", "component", "indexer", "tx_id", ev.TxID, "error", err)
 		return
 	}
 	if err := idx.db.Set([]byte(prefixTxResult+ev.TxID), data); err != nil {
-		log.Printf("[indexer] tx result write failed (tx=%s): %v", ev.TxID, err)
+		slog.Error("tx result write failed", "component", "indexer", "tx_id", ev.TxID, "error", err)
 	}
 }
 
@@ -244,7 +244,7 @@ func (idx *Indexer) onMarketList(ev events.Event) {
 		return
 	}
 	if err := idx.addToList(keyActiveListings, listingID); err != nil {
-		log.Printf("[indexer] market list add failed (listing=%s): %v", listingID, err)
+		slog.Error("market list add failed", "component", "indexer", "listing_id", listingID, "error", err)
 	}
 }
 
@@ -254,7 +254,7 @@ func (idx *Indexer) onMarketCancel(ev events.Event) {
 		return
 	}
 	if err := idx.removeFromList(keyActiveListings, listingID); err != nil {
-		log.Printf("[indexer] market cancel remove failed (listing=%s): %v", listingID, err)
+		slog.Error("market cancel remove failed", "component", "indexer", "listing_id", listingID, "error", err)
 	}
 }
 

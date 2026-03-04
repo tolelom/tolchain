@@ -3,7 +3,7 @@ package rpc
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -11,22 +11,27 @@ import (
 
 // Server is a JSON-RPC 2.0 HTTP server.
 type Server struct {
-	handler   *Handler
-	addr      string
-	authToken string // empty → no auth required
-	srv       *http.Server
-	ln        net.Listener
+	handler    *Handler
+	addr       string
+	authToken  string // empty → no auth required
+	statusFunc func() any
+	srv        *http.Server
+	ln         net.Listener
 }
 
 // NewServer creates a Server on addr. If authToken is non-empty, every
 // request must carry a matching "Authorization: Bearer <token>" header.
 // If sseBroker is non-nil, an SSE endpoint is registered at /events.
-func NewServer(addr string, handler *Handler, authToken string, sseBroker *SSEBroker) *Server {
-	s := &Server{handler: handler, addr: addr, authToken: authToken}
+// If statusFunc is non-nil, a GET /status endpoint returns its result as JSON.
+func NewServer(addr string, handler *Handler, authToken string, sseBroker *SSEBroker, statusFunc func() any) *Server {
+	s := &Server{handler: handler, addr: addr, authToken: authToken, statusFunc: statusFunc}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.serveHTTP)
 	if sseBroker != nil {
 		mux.Handle("/events", sseBroker)
+	}
+	if statusFunc != nil {
+		mux.HandleFunc("/status", s.serveStatus)
 	}
 	s.srv = &http.Server{
 		Addr:              addr,
@@ -49,7 +54,7 @@ func (s *Server) Start() error {
 	s.ln = ln
 	go func() {
 		if err := s.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			log.Printf("[rpc] server error: %v", err)
+			slog.Error("RPC server error", "error", err)
 		}
 	}()
 	return nil
@@ -102,9 +107,17 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+func (s *Server) serveStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "only GET allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, s.statusFunc())
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("[rpc] write response: %v", err)
+		slog.Error("RPC write response failed", "error", err)
 	}
 }
