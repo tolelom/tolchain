@@ -46,6 +46,24 @@ func (h *Handler) Dispatch(req Request) Response {
 	case "getAssetsByOwner":
 		return h.getAssetsByOwner(req)
 
+	case "getTemplate":
+		return h.getTemplate(req)
+
+	case "getSessionsByPlayer":
+		return h.getSessionsByPlayer(req)
+
+	case "getTxStatus":
+		return h.getTxStatus(req)
+
+	case "getActiveListings":
+		return h.getActiveListings(req)
+
+	case "getInventory":
+		return h.getInventory(req)
+
+	case "getRandomCommitment":
+		return h.getRandomCommitment(req)
+
 	case "sendTx":
 		return h.sendTx(req)
 
@@ -154,7 +172,9 @@ func (h *Handler) getListing(req Request) Response {
 
 func (h *Handler) getAssetsByOwner(req Request) Response {
 	var params struct {
-		Owner string `json:"owner"`
+		Owner  string `json:"owner"`
+		Offset int    `json:"offset"`
+		Limit  int    `json:"limit"`
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return errResponse(req.ID, CodeInvalidParams, err.Error())
@@ -162,11 +182,18 @@ func (h *Handler) getAssetsByOwner(req Request) Response {
 	if params.Owner == "" {
 		return errResponse(req.ID, CodeInvalidParams, "owner is required")
 	}
-	ids, err := h.indexer.GetAssetsByOwner(params.Owner)
+	if params.Limit == 0 && params.Offset == 0 {
+		ids, err := h.indexer.GetAssetsByOwner(params.Owner)
+		if err != nil {
+			return errResponse(req.ID, CodeInternalError, err.Error())
+		}
+		return okResponse(req.ID, ids)
+	}
+	result, err := h.indexer.GetAssetsByOwnerPaginated(params.Owner, params.Offset, params.Limit)
 	if err != nil {
 		return errResponse(req.ID, CodeInternalError, err.Error())
 	}
-	return okResponse(req.ID, ids)
+	return okResponse(req.ID, result)
 }
 
 func (h *Handler) sendTx(req Request) Response {
@@ -186,4 +213,121 @@ func (h *Handler) sendTx(req Request) Response {
 		return errResponse(req.ID, CodeInternalError, err.Error())
 	}
 	return okResponse(req.ID, map[string]string{"tx_id": tx.ID})
+}
+
+func (h *Handler) getTemplate(req Request) Response {
+	var params struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	}
+	if params.ID == "" {
+		return errResponse(req.ID, CodeInvalidParams, "id is required")
+	}
+	tmpl, err := h.state.GetTemplate(params.ID)
+	if err != nil {
+		return errResponse(req.ID, CodeInternalError, err.Error())
+	}
+	return okResponse(req.ID, tmpl)
+}
+
+func (h *Handler) getSessionsByPlayer(req Request) Response {
+	var params struct {
+		Player string `json:"player"`
+		Offset int    `json:"offset"`
+		Limit  int    `json:"limit"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	}
+	if params.Player == "" {
+		return errResponse(req.ID, CodeInvalidParams, "player is required")
+	}
+	if params.Limit == 0 && params.Offset == 0 {
+		ids, err := h.indexer.GetSessionsByPlayer(params.Player)
+		if err != nil {
+			return errResponse(req.ID, CodeInternalError, err.Error())
+		}
+		return okResponse(req.ID, ids)
+	}
+	result, err := h.indexer.GetSessionsByPlayerPaginated(params.Player, params.Offset, params.Limit)
+	if err != nil {
+		return errResponse(req.ID, CodeInternalError, err.Error())
+	}
+	return okResponse(req.ID, result)
+}
+
+func (h *Handler) getTxStatus(req Request) Response {
+	var params struct {
+		TxID string `json:"tx_id"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	}
+	if params.TxID == "" {
+		return errResponse(req.ID, CodeInvalidParams, "tx_id is required")
+	}
+	result, err := h.indexer.GetTxResult(params.TxID)
+	if err != nil {
+		return errResponse(req.ID, CodeInternalError, err.Error())
+	}
+	return okResponse(req.ID, result)
+}
+
+func (h *Handler) getActiveListings(req Request) Response {
+	var params struct {
+		Offset int `json:"offset"`
+		Limit  int `json:"limit"`
+	}
+	// Allow no-params call for backward compat.
+	if req.Params != nil {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+	if params.Limit == 0 && params.Offset == 0 {
+		ids, err := h.indexer.GetActiveListings()
+		if err != nil {
+			return errResponse(req.ID, CodeInternalError, err.Error())
+		}
+		return okResponse(req.ID, ids)
+	}
+	result, err := h.indexer.GetActiveListingsPaginated(params.Offset, params.Limit)
+	if err != nil {
+		return errResponse(req.ID, CodeInternalError, err.Error())
+	}
+	return okResponse(req.ID, result)
+}
+
+func (h *Handler) getInventory(req Request) Response {
+	var params struct {
+		Owner string `json:"owner"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	}
+	if params.Owner == "" {
+		return errResponse(req.ID, CodeInvalidParams, "owner is required")
+	}
+	inv, err := h.state.GetInventory(params.Owner)
+	if err != nil {
+		return errResponse(req.ID, CodeInternalError, err.Error())
+	}
+	return okResponse(req.ID, inv)
+}
+
+func (h *Handler) getRandomCommitment(req Request) Response {
+	var params struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	}
+	if params.ID == "" {
+		return errResponse(req.ID, CodeInvalidParams, "id is required")
+	}
+	rc, err := h.state.GetRandomCommitment(params.ID)
+	if err != nil {
+		return errResponse(req.ID, CodeInternalError, err.Error())
+	}
+	return okResponse(req.ID, rc)
 }

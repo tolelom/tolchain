@@ -30,7 +30,9 @@ var (
 	prefixAsset    = registerPrefix("asset:")
 	prefixTemplate = registerPrefix("tmpl:")
 	prefixSession  = registerPrefix("sess:")
-	prefixListing  = registerPrefix("list:")
+	prefixListing      = registerPrefix("list:")
+	prefixInventory    = registerPrefix("inv:")
+	prefixRandomCommit = registerPrefix("rcom:")
 )
 
 type stateSnapshot struct {
@@ -222,6 +224,63 @@ func (s *StateDB) SetListing(l *core.MarketListing) error {
 		return err
 	}
 	s.set(prefixListing+l.ID, data)
+	return nil
+}
+
+// ---- Inventory ----
+
+func (s *StateDB) GetInventory(owner string) (*core.Inventory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := s.get(prefixInventory + owner)
+	if errors.Is(err, core.ErrNotFound) {
+		return &core.Inventory{Owner: owner, Slots: make(map[string]string)}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var inv core.Inventory
+	if err := json.Unmarshal(data, &inv); err != nil {
+		return nil, err
+	}
+	return &inv, nil
+}
+
+func (s *StateDB) SetInventory(inv *core.Inventory) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := json.Marshal(inv)
+	if err != nil {
+		return err
+	}
+	s.set(prefixInventory+inv.Owner, data)
+	return nil
+}
+
+// ---- Random Commitment ----
+
+func (s *StateDB) GetRandomCommitment(id string) (*core.RandomCommitment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := s.get(prefixRandomCommit + id)
+	if err != nil {
+		return nil, err
+	}
+	var rc core.RandomCommitment
+	if err := json.Unmarshal(data, &rc); err != nil {
+		return nil, err
+	}
+	return &rc, nil
+}
+
+func (s *StateDB) SetRandomCommitment(rc *core.RandomCommitment) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := json.Marshal(rc)
+	if err != nil {
+		return err
+	}
+	s.set(prefixRandomCommit+rc.ID, data)
 	return nil
 }
 

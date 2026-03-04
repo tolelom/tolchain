@@ -37,6 +37,9 @@ func handleListMarket(ctx *vm.Context, payload json.RawMessage) error {
 	if !asset.Tradeable {
 		return errors.New("asset is not tradeable")
 	}
+	if equipped, _ := asset.Properties["equipped"].(bool); equipped {
+		return fmt.Errorf("asset %q is equipped; unequip it before listing", p.AssetID)
+	}
 	// Prevent double-listing the same asset.
 	if asset.ActiveListingID != "" {
 		return fmt.Errorf("asset %q is already listed (listing %s)", p.AssetID, asset.ActiveListingID)

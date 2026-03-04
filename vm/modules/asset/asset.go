@@ -88,6 +88,9 @@ func handleBurnAsset(ctx *vm.Context, payload json.RawMessage) error {
 	if asset.ActiveListingID != "" {
 		return fmt.Errorf("asset %q has an active listing; cancel it before burning", p.AssetID)
 	}
+	if equipped, _ := asset.Properties["equipped"].(bool); equipped {
+		return fmt.Errorf("asset %q is equipped; unequip it before burning", p.AssetID)
+	}
 
 	if err := ctx.State.DeleteAsset(p.AssetID); err != nil {
 		return err
@@ -129,6 +132,9 @@ func handleTransferAsset(ctx *vm.Context, payload json.RawMessage) error {
 	}
 	if asset.ActiveListingID != "" {
 		return fmt.Errorf("asset %q has an active listing; cancel it before transferring", p.AssetID)
+	}
+	if equipped, _ := asset.Properties["equipped"].(bool); equipped {
+		return fmt.Errorf("asset %q is equipped; unequip it before transferring", p.AssetID)
 	}
 
 	asset.Owner = p.To

@@ -76,6 +76,14 @@ func (e *Executor) ExecuteTx(block *core.Block, tx *core.Transaction) error {
 		if revertErr := e.state.RevertToSnapshot(snapID); revertErr != nil {
 			return fmt.Errorf("revert snapshot after tx failure: %w (revert: %v)", err, revertErr)
 		}
+		if e.emitter != nil {
+			e.emitter.Emit(events.Event{
+				Type:        events.EventTxExecuted,
+				TxID:        tx.ID,
+				BlockHeight: block.Header.Height,
+				Data:        map[string]any{"type": string(tx.Type), "from": tx.From, "success": false, "error": err.Error()},
+			})
+		}
 		return err
 	}
 
@@ -84,7 +92,7 @@ func (e *Executor) ExecuteTx(block *core.Block, tx *core.Transaction) error {
 			Type:        events.EventTxExecuted,
 			TxID:        tx.ID,
 			BlockHeight: block.Header.Height,
-			Data:        map[string]any{"type": string(tx.Type), "from": tx.From},
+			Data:        map[string]any{"type": string(tx.Type), "from": tx.From, "success": true, "error": ""},
 		})
 	}
 	return nil

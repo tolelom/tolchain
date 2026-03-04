@@ -21,7 +21,12 @@ const (
 	EventMarketList    EventType = "market_list"
 	EventMarketBuy     EventType = "market_buy"
 	EventMarketCancel  EventType = "market_cancel"
-	EventSessionCancel EventType = "session_cancel"
+	EventSessionCancel   EventType = "session_cancel"
+	EventItemEquipped    EventType = "item_equipped"
+	EventItemUnequipped  EventType = "item_unequipped"
+	EventRewardGranted   EventType = "reward_granted"
+	EventRandomCommit    EventType = "random_commit"
+	EventRandomReveal    EventType = "random_reveal"
 )
 
 // Event carries a typed payload emitted after a state change.

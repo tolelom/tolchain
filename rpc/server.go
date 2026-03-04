@@ -20,10 +20,14 @@ type Server struct {
 
 // NewServer creates a Server on addr. If authToken is non-empty, every
 // request must carry a matching "Authorization: Bearer <token>" header.
-func NewServer(addr string, handler *Handler, authToken string) *Server {
+// If sseBroker is non-nil, an SSE endpoint is registered at /events.
+func NewServer(addr string, handler *Handler, authToken string, sseBroker *SSEBroker) *Server {
 	s := &Server{handler: handler, addr: addr, authToken: authToken}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.serveHTTP)
+	if sseBroker != nil {
+		mux.Handle("/events", sseBroker)
+	}
 	s.srv = &http.Server{
 		Addr:              addr,
 		Handler:           mux,

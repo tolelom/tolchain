@@ -26,7 +26,10 @@ import (
 	// Import VM modules to trigger their init() self-registration.
 	_ "github.com/tolelom/tolchain/vm/modules/asset"
 	_ "github.com/tolelom/tolchain/vm/modules/economy"
+	_ "github.com/tolelom/tolchain/vm/modules/inventory"
 	_ "github.com/tolelom/tolchain/vm/modules/market"
+	_ "github.com/tolelom/tolchain/vm/modules/random"
+	_ "github.com/tolelom/tolchain/vm/modules/reward"
 	_ "github.com/tolelom/tolchain/vm/modules/session"
 )
 
@@ -182,7 +185,8 @@ func main() {
 	// ---- RPC ----
 	rpcAddr := fmt.Sprintf(":%d", cfg.RPCPort)
 	rpcHandler := rpc.NewHandler(bc, mempool, state, idx, cfg.Genesis.ChainID)
-	rpcServer := rpc.NewServer(rpcAddr, rpcHandler, cfg.RPCAuthToken)
+	sseBroker := rpc.NewSSEBroker(emitter, cfg.RPCAuthToken)
+	rpcServer := rpc.NewServer(rpcAddr, rpcHandler, cfg.RPCAuthToken, sseBroker)
 	if err := rpcServer.Start(); err != nil {
 		log.Fatalf("rpc start: %v", err)
 	}
