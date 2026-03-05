@@ -17,6 +17,15 @@ import (
 	"time"
 )
 
+const (
+	// certNotBeforeOffset shifts NotBefore into the past to tolerate clock skew.
+	certNotBeforeOffset = -1 * time.Hour
+	// caValidityDuration is the CA certificate lifetime (~10 years).
+	caValidityDuration = 10 * 365 * 24 * time.Hour
+	// nodeValidityDuration is the node certificate lifetime (~5 years).
+	nodeValidityDuration = 5 * 365 * 24 * time.Hour
+)
+
 // Options configures additional Subject Alternative Names for the node cert.
 type Options struct {
 	ExtraIPs []net.IP // additional IP SANs (e.g. external IP)
@@ -49,8 +58,8 @@ func GenerateAll(dir, nodeID string, opts *Options) error {
 	caTemplate := &x509.Certificate{
 		SerialNumber: caSerial,
 		Subject:      pkix.Name{CommonName: "TOL Chain CA"},
-		NotBefore:    time.Now().Add(-1 * time.Hour),
-		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour), // ~10 years
+		NotBefore:    time.Now().Add(certNotBeforeOffset),
+		NotAfter:     time.Now().Add(caValidityDuration),
 		KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 		IsCA:         true,
 		BasicConstraintsValid: true,
@@ -99,8 +108,8 @@ func GenerateAll(dir, nodeID string, opts *Options) error {
 	nodeTemplate := &x509.Certificate{
 		SerialNumber: nodeSerial,
 		Subject:      pkix.Name{CommonName: nodeID},
-		NotBefore:    time.Now().Add(-1 * time.Hour),
-		NotAfter:     time.Now().Add(5 * 365 * 24 * time.Hour), // ~5 years
+		NotBefore:    time.Now().Add(certNotBeforeOffset),
+		NotAfter:     time.Now().Add(nodeValidityDuration),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 		IPAddresses:  ips,

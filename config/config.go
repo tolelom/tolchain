@@ -7,6 +7,15 @@ import (
 	"os"
 )
 
+const (
+	// DefaultRPCPort is the default JSON-RPC listen port.
+	DefaultRPCPort = 8545
+	// DefaultP2PPort is the default peer-to-peer listen port.
+	DefaultP2PPort = 30303
+	// DefaultMaxBlockTxs is the default maximum transactions per block.
+	DefaultMaxBlockTxs = 500
+)
+
 // TLSConfig holds paths to the PEM files needed for mTLS.
 // When nil or all paths empty, the node falls back to plain TCP.
 type TLSConfig struct {
@@ -47,9 +56,9 @@ func DefaultConfig() *Config {
 	return &Config{
 		NodeID:      "node0",
 		DataDir:     "./data",
-		RPCPort:     8545,
-		P2PPort:     30303,
-		MaxBlockTxs: 500,
+		RPCPort:     DefaultRPCPort,
+		P2PPort:     DefaultP2PPort,
+		MaxBlockTxs: DefaultMaxBlockTxs,
 		Genesis: GenesisConfig{
 			ChainID: "tolchain-dev",
 			Alloc:   map[string]uint64{},

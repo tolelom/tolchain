@@ -9,6 +9,13 @@ import (
 	"github.com/tolelom/tolchain/events"
 )
 
+const (
+	// defaultSyncBatchSize is the number of blocks requested per sync round.
+	defaultSyncBatchSize = 50
+	// maxSyncBatchSize is the upper bound for a peer's block request limit.
+	maxSyncBatchSize = 200
+)
+
 // GetBlocksRequest asks a peer for blocks starting at FromHeight.
 type GetBlocksRequest struct {
 	FromHeight int64 `json:"from_height"`
@@ -72,7 +79,7 @@ func (s *Syncer) SyncWithPeer(peer *Peer) {
 
 // RequestBlocks asks peer for blocks starting at fromHeight.
 func (s *Syncer) RequestBlocks(peer *Peer, fromHeight int64) error {
-	req, err := json.Marshal(GetBlocksRequest{FromHeight: fromHeight, Limit: 50})
+	req, err := json.Marshal(GetBlocksRequest{FromHeight: fromHeight, Limit: defaultSyncBatchSize})
 	if err != nil {
 		return err
 	}
@@ -84,8 +91,8 @@ func (s *Syncer) handleGetBlocks(peer *Peer, msg Message) {
 	if err := json.Unmarshal(msg.Payload, &req); err != nil {
 		return
 	}
-	if req.Limit <= 0 || req.Limit > 200 {
-		req.Limit = 50
+	if req.Limit <= 0 || req.Limit > maxSyncBatchSize {
+		req.Limit = defaultSyncBatchSize
 	}
 	blocks := make([]*core.Block, 0, req.Limit)
 	for h := req.FromHeight; h < req.FromHeight+int64(req.Limit); h++ {
@@ -193,7 +200,7 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 	}
 
 	// If we received a full batch, there may be more blocks — keep requesting.
-	if len(resp.Blocks) >= 50 {
+	if len(resp.Blocks) >= defaultSyncBatchSize {
 		nextHeight := s.bc.Height() + 1
 		if err := s.RequestBlocks(peer, nextHeight); err != nil {
 			slog.Error("follow-up request failed", "component", "sync", "peer", peer.ID, "error", err)

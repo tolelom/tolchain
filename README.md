@@ -1,62 +1,108 @@
 # TOL Chain
 
-게임(MMORPG, 로그라이크 등) 특화 블록체인. 에셋, 세션, 마켓 등 게임 원시 기능을 온체인에서 직접 처리한다.
+Game-specialized private blockchain written in Go.
+Assets, sessions, markets, inventory, rewards, and verifiable randomness — all on-chain.
 
-## 특징
+[![CI](https://github.com/tolelom/tolchain/actions/workflows/ci.yml/badge.svg)](https://github.com/tolelom/tolchain/actions/workflows/ci.yml)
+![Go 1.24](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go)
 
-- **범용 에셋** — 아이템·카드·캐릭터 등을 동일한 구조로 표현. 템플릿으로 스키마를 정의하고 민팅한다. 스키마 검증으로 프로퍼티 타입을 보장한다.
-- **게임 세션** — 플레이어 스테이크를 잠근 뒤 결과에 따라 보상을 분배한다. 스테이크 세션 참여 시 플레이어 동의 서명이 필요하다.
-- **P2P 마켓** — 에셋을 온체인에서 직접 거래한다. 리스팅 취소를 지원한다.
-- **PoA 합의** — 검증자 목록 기반 라운드-로빈 블록 제안. 실패 트랜잭션을 자동 건너뛰어 블록 생성 안정성을 보장한다.
-- **이벤트 버퍼링** — 블록 커밋 후에만 이벤트를 발행하여 롤백된 상태 변경이 구독자에게 전달되지 않는다.
-- **오퍼레이터 권한** — 설정된 오퍼레이터만 템플릿 등록·세션 관리를 할 수 있다 (비어있으면 제한 없음).
-- **확장 가능한 VM** — 새 트랜잭션 타입은 `init()`에서 핸들러를 등록하기만 하면 된다.
+---
 
-## 프로젝트 구조
+## Overview
 
-```
-tolchain/
-├── cmd/node/          # 노드 진입점
-├── config/            # 설정 및 제네시스 블록
-├── consensus/         # Proof-of-Authority 합의
-├── core/              # 트랜잭션·블록·상태 타입 정의
-├── crypto/            # SHA-256 해시, ed25519 서명
-├── events/            # 블록 이벤트 발행/구독
-├── indexer/           # 보조 인덱스 (소유자→에셋, 플레이어→세션)
-├── internal/testutil/ # 테스트 전용 인메모리 구현
-├── network/           # TCP P2P 네트워킹, 블록 동기화
-├── rpc/               # JSON-RPC 2.0 HTTP 서버
-├── storage/           # LevelDB 래퍼, StateDB (스냅샷/롤백)
-├── tests/             # 통합 테스트
-├── vm/                # 트랜잭션 실행기 및 핸들러 레지스트리
-│   └── modules/       # asset / economy / market / session 모듈
-└── wallet/            # 키 생성·저장, 트랜잭션 서명 헬퍼
-```
+TOL Chain is a Proof-of-Authority blockchain designed for MMORPG backends.
+Game servers submit signed transactions for item drops, trades, and session results;
+the chain provides a tamper-proof, auditable record without requiring a full public consensus protocol.
 
-## 빠른 시작
+| Component | Technology |
+|-----------|-----------|
+| Language | Go 1.24 |
+| Consensus | PoA round-robin |
+| Signature | ed25519 (stdlib) |
+| Hash | SHA-256 (stdlib) |
+| Storage | LevelDB |
+| Key encryption | PBKDF2 + AES-256-GCM |
+| RPC | JSON-RPC 2.0 + SSE |
+| P2P | TCP + length-prefixed JSON |
+| Monitoring | Prometheus + Grafana |
+| External deps | 2 (goleveldb, x/crypto) |
+| CI/CD | GitHub Actions → GHCR → SSH deploy |
+
+---
+
+## Features
+
+- **16 transaction types** across 7 pluggable VM modules
+- **Asset management** — mint, burn, transfer with schema-validated templates
+- **In-game marketplace** — list / buy / cancel with equipped-item blocking
+- **Game sessions** — stake locking, multi-player consent signatures, reward distribution
+- **Inventory** — slot-based equipment with trade/burn protection while equipped
+- **Batch rewards** — atomic token + asset grants (operator-only)
+- **Commit-reveal randomness** — `hash(secret + prevBlockHash)` for fair drops
+- **SSE event streaming** — real-time events with type filtering (19 event types)
+- **IP-based rate limiting** — token bucket (100 req/s, burst 200) per IP
+- **Prometheus metrics** — 15 custom metrics across consensus, mempool, network, RPC
+- **Snapshot/rollback** — per-tx and per-block state rollback on failure
+- **mTLS support** — optional mutual TLS for P2P connections
+
+---
+
+## Quick Start
+
+### Dev Mode (no config file needed)
 
 ```bash
-# 의존성 설치
-go mod download
+# Generate a validator key
+export TOL_PASSWORD=my-secret
+go run ./cmd/node --genkey
 
-# 전체 빌드
-go build ./...
-
-# 테스트
-go test ./...
-
-# 검증자 키 생성
-go run ./cmd/node --genkey --key validator.key --password mypassword
-
-# 노드 실행 (기본 설정)
-go run ./cmd/node --key validator.key --password mypassword
+# Start the node (auto-creates genesis with the loaded key)
+go run ./cmd/node
 ```
 
-기본 설정으로 실행하면 RPC는 `:8545`, P2P는 `:30303`에서 수신한다.
+The node starts on `:8545` (RPC) and `:30303` (P2P).
 
-## 설정
+```bash
+# Test RPC
+curl -s -X POST http://localhost:8545 \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"getBlockHeight","params":{},"id":1}'
 
-`config.json`이 없으면 기본값으로 실행된다. 생성 예시:
+# Check node status
+curl -s http://localhost:8545/status | jq
+```
+
+### Docker
+
+```bash
+# Automated single-node setup
+./scripts/setup.sh
+
+# Start all services (node + Prometheus + Grafana)
+docker compose up -d
+
+# Logs
+docker compose logs -f tolchain
+
+# Stop
+docker compose down
+```
+
+### Build from Source
+
+```bash
+make build              # current OS/arch
+make darwin-arm64       # macOS Apple Silicon
+make linux-amd64        # Linux x86_64
+make test               # run tests
+make vet                # static analysis
+```
+
+---
+
+## Configuration
+
+Create `config.json` (or omit for dev defaults):
 
 ```json
 {
@@ -65,57 +111,226 @@ go run ./cmd/node --key validator.key --password mypassword
   "rpc_port": 8545,
   "p2p_port": 30303,
   "max_block_txs": 500,
-  "validators": ["<검증자 pubkey hex>"],
-  "operators": ["<게임 서버 pubkey hex>"],
+  "rpc_auth_token": "optional-bearer-token",
+  "validators": ["<ed25519-pubkey-hex>"],
+  "operators": ["<game-server-pubkey-hex>"],
   "genesis": {
-    "chain_id": "tolchain-dev",
+    "chain_id": "tolchain-mainnet",
     "alloc": {
-      "<pubkey hex>": 1000000
+      "<pubkey-hex>": 1000000
     }
+  },
+  "seed_peers": [
+    { "id": "node1", "addr": "10.0.0.2:30303" }
+  ],
+  "tls": {
+    "ca_cert": "certs/ca.crt",
+    "node_cert": "certs/node.crt",
+    "node_key": "certs/node.key"
   }
 }
 ```
 
-- `validators`: 블록 제안 권한이 있는 검증자 공개키 목록 (필수, config 파일 없으면 로드된 키 자동 등록)
-- `operators`: 템플릿 등록·세션 관리 권한이 있는 오퍼레이터 공개키 목록 (선택, 비어있으면 제한 없음)
+| Field | Default | Description |
+|-------|---------|-------------|
+| `node_id` | — | Unique node identifier (required) |
+| `data_dir` | `./data` | LevelDB storage directory |
+| `rpc_port` | `8545` | JSON-RPC HTTP port |
+| `p2p_port` | `30303` | P2P TCP port |
+| `max_block_txs` | `500` | Max transactions per block |
+| `validators` | — | Validator public keys (required) |
+| `operators` | — | Game operator keys (empty = no restriction) |
+| `rpc_auth_token` | — | Bearer token for RPC auth (empty = no auth) |
+
+Environment variable: `TOL_PASSWORD` — keystore encryption password.
+
+---
 
 ## RPC API
 
-모든 요청은 `POST /` 에 JSON-RPC 2.0 형식으로 보낸다.
+All requests: `POST /` with JSON-RPC 2.0.
+Auth: `Authorization: Bearer <token>` (if configured).
 
-| 메서드 | 파라미터 | 설명 |
-|--------|----------|------|
-| `getBlockHeight` | — | 현재 블록 높이 |
-| `getBlock` | `hash` 또는 `height` | 블록 조회 |
-| `getBalance` | `address` | 계정 잔액 |
-| `getAsset` | `id` | 에셋 조회 |
-| `getSession` | `id` | 세션 조회 |
-| `getListing` | `id` | 마켓 리스팅 조회 |
-| `getAssetsByOwner` | `owner` | 소유자의 에셋 목록 |
-| `sendTx` | 서명된 트랜잭션 | 멤풀에 제출 |
-| `getMempoolSize` | — | 멤풀 트랜잭션 수 |
+### Query Methods
 
-## 트랜잭션 타입
+| Method | Params | Returns |
+|--------|--------|---------|
+| `getBlockHeight` | — | `int64` |
+| `getBlock` | `hash` or `height` | Block |
+| `getBalance` | `address` | `{balance, nonce}` |
+| `getAsset` | `id` | Asset |
+| `getTemplate` | `id` | AssetTemplate |
+| `getSession` | `id` | Session |
+| `getListing` | `id` | MarketListing |
+| `getInventory` | `owner` | Inventory |
+| `getRandomCommitment` | `id` | RandomCommitment |
+| `getTxStatus` | `tx_id` | TxStatus |
+| `getMempoolSize` | — | `int` |
+| `getAssetsByOwner` | `owner, offset?, limit?` | `[]string` or paginated |
+| `getSessionsByPlayer` | `player, offset?, limit?` | `[]string` or paginated |
+| `getActiveListings` | `offset?, limit?` | `[]string` or paginated |
 
-| 타입 | 설명 |
-|------|------|
-| `transfer` | 토큰 전송 |
-| `register_template` | 에셋 템플릿 등록 (오퍼레이터 제한 가능) |
-| `mint_asset` | 에셋 민팅 (스키마 검증 포함) |
-| `burn_asset` | 에셋 소각 |
-| `transfer_asset` | 에셋 전송 |
-| `session_open` | 게임 세션 시작 (스테이크 잠금, 플레이어 동의 서명 필요) |
-| `session_result` | 세션 종료 및 보상 분배 |
-| `session_cancel` | 세션 취소 및 스테이크 환불 |
-| `list_market` | 에셋 마켓 등록 |
-| `buy_market` | 마켓 구매 |
-| `cancel_listing` | 마켓 리스팅 취소 |
+### Write Method
 
-## 기술 스택
+| Method | Params | Description |
+|--------|--------|-------------|
+| `sendTx` | signed transaction | Submit to mempool |
 
-- **언어** — Go 1.22
-- **서명** — ed25519 (표준 라이브러리)
-- **해시** — SHA-256
-- **저장소** — LevelDB (`github.com/syndtr/goleveldb`)
-- **RPC** — JSON-RPC 2.0 over HTTP
-- **네트워크** — TCP + JSON 인코딩
+### Additional Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/status` | GET | Node status JSON (no auth) |
+| `/events` | GET | SSE event stream (`?types=asset_minted,market_buy`) |
+| `/metrics` | GET | Prometheus metrics |
+
+---
+
+## Transaction Types
+
+| Type | Module | Permission | Description |
+|------|--------|-----------|-------------|
+| `transfer` | economy | anyone | Token transfer |
+| `register_template` | asset | operator | Define asset schema |
+| `mint_asset` | asset | operator | Create asset from template |
+| `burn_asset` | asset | owner | Destroy asset (blocked if equipped) |
+| `transfer_asset` | asset | owner | Transfer asset (blocked if equipped) |
+| `session_open` | session | operator | Start game session with stakes |
+| `session_result` | session | operator | Close session, distribute rewards |
+| `session_cancel` | session | operator | Cancel session, refund stakes |
+| `list_market` | market | owner | List asset for sale (blocked if equipped) |
+| `buy_market` | market | anyone | Purchase listed asset |
+| `cancel_listing` | market | owner | Remove market listing |
+| `equip_item` | inventory | owner | Assign asset to slot |
+| `unequip_item` | inventory | owner | Remove asset from slot |
+| `grant_reward` | reward | operator | Batch token + asset grant |
+| `random_commit` | random | operator | Submit hash commitment |
+| `random_reveal` | random | operator | Reveal secret, compute result |
+
+---
+
+## Event System
+
+19 event types streamed via SSE at `GET /events`:
+
+`block_commit` · `tx_executed` · `token_transfer` · `asset_minted` · `asset_burned` · `asset_transfer` · `template_registered` · `session_open` · `session_close` · `session_cancel` · `market_list` · `market_buy` · `market_cancel` · `item_equipped` · `item_unequipped` · `reward_granted` · `random_commit` · `random_reveal`
+
+Events are buffered during block execution and emitted only after successful commit.
+
+---
+
+## Monitoring
+
+Prometheus metrics are exposed at `/metrics` on the RPC port.
+
+| Category | Metrics |
+|----------|---------|
+| **Consensus** | `blocks_produced_total`, `block_height`, `block_production_duration_seconds`, `block_tx_count`, `tx_failed_total` |
+| **Mempool** | `mempool_size`, `mempool_added_total`, `mempool_removed_total`, `mempool_rejected_total{reason}` |
+| **Network** | `peers_connected`, `p2p_messages_received_total{type}` |
+| **RPC** | `rpc_requests_total{method}`, `rpc_request_duration_seconds{method}`, `rpc_errors_total{code}`, `rpc_rate_limited_total` |
+
+`docker compose up -d` starts Prometheus (`:9090`) and Grafana (`:3000`, admin/admin) alongside the node.
+
+---
+
+## Project Structure
+
+```
+tolchain/
+├── cmd/node/           # Entry point, CLI flags, graceful shutdown
+├── config/             # Config loading, validation, genesis block
+├── consensus/          # PoA round-robin block production & validation
+├── core/               # Block, Transaction, Account, Asset, Mempool
+├── crypto/             # SHA-256, ed25519, TLS cert generation
+├── events/             # Pub/Sub emitter with commit-deferred buffering
+├── indexer/            # Secondary indexes (owner→assets, player→sessions)
+├── internal/testutil/  # In-memory DB & block store for tests
+├── metrics/            # Prometheus metric definitions
+├── monitoring/         # Prometheus/Grafana configuration
+├── network/            # TCP P2P, peer management, block sync
+├── rpc/                # JSON-RPC 2.0 server, rate limiter, SSE broker
+├── scripts/            # Deployment automation
+├── storage/            # LevelDB wrapper, StateDB with snapshot/rollback
+├── tests/              # Integration tests & benchmarks
+├── vm/                 # Transaction executor & handler registry
+│   └── modules/        # asset, economy, inventory, market, random, reward, session
+└── wallet/             # Key generation, AES-GCM keystore, tx builders
+```
+
+### Adding a New Transaction Type
+
+1. `core/transaction.go` — add `TxType` constant + payload struct
+2. `core/state.go` — add domain type + `State` interface methods (if needed)
+3. `storage/statedb.go` — register prefix + implement Get/Set
+4. `events/emitter.go` — add `EventType` constant
+5. `vm/modules/<name>/` — implement handler + `init()` registration
+6. `rpc/handler.go` — add query RPC method
+7. `wallet/wallet.go` — add tx builder helper
+8. `cmd/node/main.go` — add blank import
+9. `tests/` — write tests (with blank imports for VM modules)
+
+---
+
+## Testing
+
+```bash
+# All tests
+go test ./tests/ -v
+
+# With coverage
+go test ./tests/ -coverprofile=coverage.out -coverpkg=./...
+go tool cover -func=coverage.out | tail -1
+
+# Benchmarks
+go test ./tests/ -bench=. -benchmem -run=^$
+```
+
+CI enforces a **50% minimum coverage** gate.
+
+---
+
+## Security
+
+- **Keystore**: PBKDF2 (210,000 iterations) + AES-256-GCM + random nonce, file permission 0600
+- **P2P**: 10 MB message limit, 5 min read timeout, 30 sec write timeout, max 50 peers
+- **RPC**: Bearer token auth, 1 MB body limit, IP rate limiting (100/s burst 200)
+- **State**: Mutex-protected StateDB, deep-copy snapshots, nonce-based replay prevention
+- **Chain**: ChainID cross-chain replay prevention, 15 sec timestamp drift limit, monotonic block timestamps
+
+---
+
+## Game Integration Examples
+
+### Item Drop (Boss Kill)
+
+```
+Game Server → Web Server → TOL Chain: grant_reward tx (tokens + asset)
+TOL Chain → SSE: reward_granted event → Web Server → Unity UI update
+```
+
+### Marketplace Trade
+
+```
+Player A → list_market tx (blocked if item is equipped)
+Player B → buy_market tx → automatic asset transfer + payment
+SSE: market_buy event → both players notified in real-time
+```
+
+### Fair Random Drop
+
+```
+1. Operator: random_commit(hash(secret))
+2. At drop time: random_reveal(secret)
+3. Result = hash(secret + block.PrevHash) → tamper-proof
+```
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
+
+## License
+
+This project is licensed under the MIT License — see [LICENSE](LICENSE) for details.
