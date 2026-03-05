@@ -14,6 +14,7 @@ import (
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/crypto"
 	"github.com/tolelom/tolchain/events"
+	"github.com/tolelom/tolchain/metrics"
 	"github.com/tolelom/tolchain/vm"
 )
 
@@ -65,13 +66,14 @@ func (p *PoA) IsProposer() bool {
 // Failed transactions are skipped (and removed from the mempool) so that a
 // single invalid tx cannot stall block production.
 func (p *PoA) ProduceBlock() (*core.Block, error) {
+	start := time.Now()
 	if !p.IsProposer() {
 		return nil, errors.New("not the proposer for this round")
 	}
 
 	limit := p.cfg.MaxBlockTxs
 	if limit <= 0 {
-		limit = 500
+		limit = defaultMaxBlockTxs
 	}
 	candidates := p.mempool.Pending(limit)
 
@@ -106,6 +108,7 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 	for _, tx := range candidates {
 		if txErr := p.exec.ExecuteTx(tmpBlock, tx); txErr != nil {
 			slog.Warn("skipping failed tx", "component", "consensus", "tx_id", tx.ID, "error", txErr)
+			metrics.TxFailed.Inc()
 			failedIDs = append(failedIDs, tx.ID)
 			continue
 		}
@@ -160,11 +163,20 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 	}
 	p.mempool.Remove(txIDs)
 
+	metrics.BlocksProduced.Inc()
+	metrics.BlockHeight.Set(float64(block.Header.Height))
+	metrics.BlockProductionDuration.Observe(time.Since(start).Seconds())
+	metrics.BlockTxCount.Observe(float64(len(successTxs)))
+
 	return block, nil
 }
 
-// maxBlockTimeDrift is the maximum allowed clock drift for incoming blocks.
-const maxBlockTimeDrift = int64(15 * time.Second)
+const (
+	// defaultMaxBlockTxs is the fallback limit when Config.MaxBlockTxs is not set.
+	defaultMaxBlockTxs = 500
+	// maxBlockTimeDrift is the maximum allowed clock drift for incoming blocks.
+	maxBlockTimeDrift = int64(15 * time.Second)
+)
 
 // ValidateBlock checks that block was proposed by the expected validator.
 func (p *PoA) ValidateBlock(block *core.Block) error {

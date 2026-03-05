@@ -13,6 +13,15 @@ import (
 	"time"
 )
 
+const (
+	// peerWriteTimeout is the deadline for writing a message to a peer.
+	peerWriteTimeout = 30 * time.Second
+	// peerReadTimeout is the deadline for reading the next message from a peer.
+	peerReadTimeout = 5 * time.Minute
+	// maxMessageSize is the maximum allowed size of a single P2P message (10 MB).
+	maxMessageSize = 10 * 1024 * 1024
+)
+
 // MsgType labels a network message.
 type MsgType string
 
@@ -74,7 +83,7 @@ func (p *Peer) Send(msg Message) error {
 	if p.closed {
 		return fmt.Errorf("peer %s closed", p.ID)
 	}
-	if err := p.conn.SetWriteDeadline(time.Now().Add(30 * time.Second)); err != nil {
+	if err := p.conn.SetWriteDeadline(time.Now().Add(peerWriteTimeout)); err != nil {
 		return fmt.Errorf("set write deadline: %w", err)
 	}
 	// 4-byte big-endian length prefix
@@ -90,7 +99,7 @@ func (p *Peer) Send(msg Message) error {
 // Receive reads the next length-prefixed JSON message.
 // A 5-minute read deadline prevents a stalled peer from blocking indefinitely.
 func (p *Peer) Receive() (Message, error) {
-	if err := p.conn.SetReadDeadline(time.Now().Add(5 * time.Minute)); err != nil {
+	if err := p.conn.SetReadDeadline(time.Now().Add(peerReadTimeout)); err != nil {
 		return Message{}, fmt.Errorf("set read deadline: %w", err)
 	}
 	var header [4]byte
@@ -98,7 +107,7 @@ func (p *Peer) Receive() (Message, error) {
 		return Message{}, err
 	}
 	length := binary.BigEndian.Uint32(header[:])
-	if length > 10*1024*1024 { // 10 MB safety limit
+	if length > maxMessageSize {
 		return Message{}, fmt.Errorf("message too large: %d bytes", length)
 	}
 	buf := make([]byte, length)

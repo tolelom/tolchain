@@ -16,6 +16,15 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
+const (
+	// saltSize is the byte length of the random salt for key derivation.
+	saltSize = 16
+	// pbkdf2Iterations is the number of PBKDF2 rounds for key derivation.
+	pbkdf2Iterations = 210_000
+	// derivedKeySize is the byte length of the AES key derived from the password.
+	derivedKeySize = 32
+)
+
 type keystoreFile struct {
 	PubKey     string `json:"pub_key"`
 	Salt       string `json:"salt"`
@@ -26,7 +35,7 @@ type keystoreFile struct {
 // SaveKey encrypts priv with password and writes it to path.
 // Key derivation: SHA-256(password || salt) — simple, sufficient for this chain.
 func SaveKey(path, password string, priv crypto.PrivateKey) error {
-	salt := make([]byte, 16)
+	salt := make([]byte, saltSize)
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
 		return err
 	}
@@ -99,5 +108,5 @@ func LoadKey(path, password string) (crypto.PrivateKey, error) {
 }
 
 func deriveKey(password string, salt []byte) []byte {
-	return pbkdf2.Key([]byte(password), salt, 210_000, 32, sha256.New)
+	return pbkdf2.Key([]byte(password), salt, pbkdf2Iterations, derivedKeySize, sha256.New)
 }

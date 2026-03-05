@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/tolelom/tolchain/metrics"
 )
 
 const (
@@ -34,26 +36,32 @@ func NewMempool() *Mempool {
 // is out of the acceptable window (±1 h / +5 min).
 func (m *Mempool) Add(tx *Transaction) error {
 	if err := tx.Verify(); err != nil {
+		metrics.MempoolRejected.WithLabelValues("invalid_sig").Inc()
 		return fmt.Errorf("invalid tx signature: %w", err)
 	}
 	now := time.Now().UnixNano()
 	if now > tx.Timestamp && now-tx.Timestamp > maxTxAge {
+		metrics.MempoolRejected.WithLabelValues("expired").Inc()
 		return errors.New("transaction expired")
 	}
 	if tx.Timestamp > now && tx.Timestamp-now > maxTxFuture {
+		metrics.MempoolRejected.WithLabelValues("future_ts").Inc()
 		return errors.New("transaction timestamp too far in the future")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.txs) >= maxMempoolSize {
+		metrics.MempoolRejected.WithLabelValues("full").Inc()
 		return errors.New("mempool full")
 	}
 	if _, exists := m.txs[tx.ID]; exists {
+		metrics.MempoolRejected.WithLabelValues("duplicate").Inc()
 		return errors.New("tx already in pool")
 	}
 	// Reject duplicate nonce from the same sender.
 	if senderNonces, ok := m.nonces[tx.From]; ok {
 		if _, dup := senderNonces[tx.Nonce]; dup {
+			metrics.MempoolRejected.WithLabelValues("dup_nonce").Inc()
 			return fmt.Errorf("duplicate nonce %d from sender %s", tx.Nonce, tx.From)
 		}
 	}
@@ -63,6 +71,8 @@ func (m *Mempool) Add(tx *Transaction) error {
 		m.nonces[tx.From] = make(map[uint64]string)
 	}
 	m.nonces[tx.From][tx.Nonce] = tx.ID
+	metrics.MempoolAdded.Inc()
+	metrics.MempoolSize.Set(float64(len(m.txs)))
 	return nil
 }
 
@@ -115,6 +125,8 @@ func (m *Mempool) Remove(ids []string) {
 		}
 	}
 	m.ord = filtered
+	metrics.MempoolRemoved.Add(float64(len(removed)))
+	metrics.MempoolSize.Set(float64(len(m.txs)))
 }
 
 // Size returns the current number of pending transactions.

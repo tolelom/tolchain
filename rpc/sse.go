@@ -11,6 +11,10 @@ import (
 	"github.com/tolelom/tolchain/events"
 )
 
+// sseEventBufferSize is the per-client event channel capacity.
+// Slow clients that exceed this buffer will have events dropped.
+const sseEventBufferSize = 64
+
 // SSEBroker manages SSE client connections and broadcasts chain events.
 type SSEBroker struct {
 	mu        sync.Mutex
@@ -75,7 +79,7 @@ func (b *SSEBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	ch := make(chan events.Event, 64)
+	ch := make(chan events.Event, sseEventBufferSize)
 	var filter map[events.EventType]bool
 	if types := r.URL.Query().Get("types"); types != "" {
 		filter = make(map[events.EventType]bool)

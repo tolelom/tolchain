@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tolelom/tolchain/core"
+	"github.com/tolelom/tolchain/metrics"
 )
 
 // MessageHandler is called for each received message.
@@ -101,6 +102,7 @@ func (n *Node) AddPeer(id, addr string) error {
 	n.mu.Lock()
 	n.peers[id] = peer
 	n.mu.Unlock()
+	metrics.PeersConnected.Inc()
 	go n.readLoop(peer)
 
 	// Send hello
@@ -194,6 +196,7 @@ func (n *Node) acceptLoop() {
 		n.mu.Lock()
 		n.peers[peer.ID] = peer
 		n.mu.Unlock()
+		metrics.PeersConnected.Inc()
 		go n.readLoop(peer)
 	}
 }
@@ -207,12 +210,14 @@ func (n *Node) readLoop(peer *Peer) {
 		n.mu.Lock()
 		delete(n.peers, peer.ID)
 		n.mu.Unlock()
+		metrics.PeersConnected.Dec()
 	}()
 	for {
 		msg, err := peer.Receive()
 		if err != nil {
 			return
 		}
+		metrics.P2PMessagesReceived.WithLabelValues(string(msg.Type)).Inc()
 		n.mu.RLock()
 		h, ok := n.handlers[msg.Type]
 		n.mu.RUnlock()
