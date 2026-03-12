@@ -213,3 +213,162 @@ func TestStateDB_Listing_SetAndGet(t *testing.T) {
 		t.Fatal("listing data mismatch")
 	}
 }
+
+func TestStateDB_Template_SetAndGet(t *testing.T) {
+	s := newTestState()
+	tmpl := &core.AssetTemplate{ID: "t1", Name: "Sword", Creator: "alice"}
+	if err := s.SetTemplate(tmpl); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetTemplate("t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "t1" || got.Name != "Sword" || got.Creator != "alice" {
+		t.Fatalf("template data mismatch: got %+v", got)
+	}
+}
+
+func TestStateDB_Template_NotFound(t *testing.T) {
+	s := newTestState()
+	_, err := s.GetTemplate("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent template")
+	}
+}
+
+func TestStateDB_RandomCommitment_SetAndGet(t *testing.T) {
+	s := newTestState()
+	rc := &core.RandomCommitment{ID: "rc1", Committer: "alice", CommitHash: "abc123"}
+	if err := s.SetRandomCommitment(rc); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetRandomCommitment("rc1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "rc1" || got.Committer != "alice" || got.CommitHash != "abc123" {
+		t.Fatalf("random commitment data mismatch: got %+v", got)
+	}
+}
+
+func TestStateDB_RandomCommitment_NotFound(t *testing.T) {
+	s := newTestState()
+	_, err := s.GetRandomCommitment("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent random commitment")
+	}
+}
+
+func TestStateDB_Inventory_SetAndGet(t *testing.T) {
+	s := newTestState()
+	inv := &core.Inventory{Owner: "alice", Slots: map[string]string{"weapon": "sword1", "armor": "plate1"}}
+	if err := s.SetInventory(inv); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetInventory("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Slots["weapon"] != "sword1" || got.Slots["armor"] != "plate1" {
+		t.Fatal("inventory data mismatch")
+	}
+}
+
+// ---- Corrupt data tests (cover json.Unmarshal error branches) ----
+
+func TestStateDB_GetAccount_CorruptData(t *testing.T) {
+	db := testutil.NewMemDB()
+	s := storage.NewStateDB(db)
+	db.Set([]byte("acct:alice"), []byte("not json"))
+	_, err := s.GetAccount("alice")
+	if err == nil {
+		t.Fatal("expected error for corrupt account data")
+	}
+}
+
+func TestStateDB_GetAsset_CorruptData(t *testing.T) {
+	db := testutil.NewMemDB()
+	s := storage.NewStateDB(db)
+	db.Set([]byte("asset:a1"), []byte("not json"))
+	_, err := s.GetAsset("a1")
+	if err == nil {
+		t.Fatal("expected error for corrupt asset data")
+	}
+}
+
+func TestStateDB_GetTemplate_CorruptData(t *testing.T) {
+	db := testutil.NewMemDB()
+	s := storage.NewStateDB(db)
+	db.Set([]byte("tmpl:t1"), []byte("not json"))
+	_, err := s.GetTemplate("t1")
+	if err == nil {
+		t.Fatal("expected error for corrupt template data")
+	}
+}
+
+func TestStateDB_GetSession_CorruptData(t *testing.T) {
+	db := testutil.NewMemDB()
+	s := storage.NewStateDB(db)
+	db.Set([]byte("sess:s1"), []byte("not json"))
+	_, err := s.GetSession("s1")
+	if err == nil {
+		t.Fatal("expected error for corrupt session data")
+	}
+}
+
+func TestStateDB_GetListing_CorruptData(t *testing.T) {
+	db := testutil.NewMemDB()
+	s := storage.NewStateDB(db)
+	db.Set([]byte("list:l1"), []byte("not json"))
+	_, err := s.GetListing("l1")
+	if err == nil {
+		t.Fatal("expected error for corrupt listing data")
+	}
+}
+
+func TestStateDB_GetInventory_CorruptData(t *testing.T) {
+	db := testutil.NewMemDB()
+	s := storage.NewStateDB(db)
+	db.Set([]byte("inv:alice"), []byte("not json"))
+	_, err := s.GetInventory("alice")
+	if err == nil {
+		t.Fatal("expected error for corrupt inventory data")
+	}
+}
+
+func TestStateDB_GetRandomCommitment_CorruptData(t *testing.T) {
+	db := testutil.NewMemDB()
+	s := storage.NewStateDB(db)
+	db.Set([]byte("rcom:rc1"), []byte("not json"))
+	_, err := s.GetRandomCommitment("rc1")
+	if err == nil {
+		t.Fatal("expected error for corrupt random commitment data")
+	}
+}
+
+func TestStateDB_Inventory_SetOverwrite(t *testing.T) {
+	s := newTestState()
+	inv1 := &core.Inventory{Owner: "alice", Slots: map[string]string{"weapon": "sword1"}}
+	if err := s.SetInventory(inv1); err != nil {
+		t.Fatal(err)
+	}
+
+	inv2 := &core.Inventory{Owner: "alice", Slots: map[string]string{"weapon": "sword2", "shield": "buckler"}}
+	if err := s.SetInventory(inv2); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetInventory("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Slots["weapon"] != "sword2" {
+		t.Fatalf("expected sword2, got %s", got.Slots["weapon"])
+	}
+	if got.Slots["shield"] != "buckler" {
+		t.Fatalf("expected buckler, got %s", got.Slots["shield"])
+	}
+}

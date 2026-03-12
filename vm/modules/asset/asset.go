@@ -36,8 +36,8 @@ func handleMintAsset(ctx *vm.Context, payload json.RawMessage) error {
 		owner = ctx.Tx.From
 	} else {
 		// Validate that the provided owner is a real ed25519 pubkey.
-		if _, err := crypto.PubKeyFromHex(owner); err != nil {
-			return fmt.Errorf("invalid owner pubkey: %w", err)
+		if err := vm.ValidatePubKey(owner, "owner pubkey"); err != nil {
+			return err
 		}
 	}
 
@@ -112,12 +112,8 @@ func handleTransferAsset(ctx *vm.Context, payload json.RawMessage) error {
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("decode transfer_asset payload: %w", err)
 	}
-	if p.To == "" {
-		return errors.New("to address required")
-	}
-	// Validate recipient is a real ed25519 pubkey.
-	if _, err := crypto.PubKeyFromHex(p.To); err != nil {
-		return fmt.Errorf("invalid to pubkey: %w", err)
+	if err := vm.ValidatePubKey(p.To, "to address"); err != nil {
+		return err
 	}
 
 	asset, err := ctx.State.GetAsset(p.AssetID)

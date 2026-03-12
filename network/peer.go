@@ -13,14 +13,6 @@ import (
 	"time"
 )
 
-const (
-	// peerWriteTimeout is the deadline for writing a message to a peer.
-	peerWriteTimeout = 30 * time.Second
-	// peerReadTimeout is the deadline for reading the next message from a peer.
-	peerReadTimeout = 5 * time.Minute
-	// maxMessageSize is the maximum allowed size of a single P2P message (10 MB).
-	maxMessageSize = 10 * 1024 * 1024
-)
 
 // MsgType labels a network message.
 type MsgType string
@@ -46,19 +38,30 @@ type Peer struct {
 	ID   string
 	Addr string
 
-	conn   net.Conn
-	mu     sync.Mutex
-	closed bool
+	conn           net.Conn
+	mu             sync.Mutex
+	closed         bool
+	writeTimeout   time.Duration
+	readTimeout    time.Duration
+	maxMessageSize uint32
 }
 
 // NewPeer wraps an established TCP connection as a Peer.
-func NewPeer(id, addr string, conn net.Conn) *Peer {
-	return &Peer{ID: id, Addr: addr, conn: conn}
+// writeTimeoutSec, readTimeoutSec, maxMsgSize configure per-peer limits.
+func NewPeer(id, addr string, conn net.Conn, writeTimeoutSec, readTimeoutSec, maxMsgSize int) *Peer {
+	return &Peer{
+		ID:             id,
+		Addr:           addr,
+		conn:           conn,
+		writeTimeout:   time.Duration(writeTimeoutSec) * time.Second,
+		readTimeout:    time.Duration(readTimeoutSec) * time.Second,
+		maxMessageSize: uint32(maxMsgSize),
+	}
 }
 
 // Connect dials the remote address and returns a connected Peer.
 // If tlsCfg is non-nil the connection is established over TLS.
-func Connect(id, addr string, tlsCfg *tls.Config) (*Peer, error) {
+func Connect(id, addr string, tlsCfg *tls.Config, writeTimeoutSec, readTimeoutSec, maxMsgSize int) (*Peer, error) {
 	var conn net.Conn
 	var err error
 	if tlsCfg != nil {
@@ -69,7 +72,7 @@ func Connect(id, addr string, tlsCfg *tls.Config) (*Peer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect to %s: %w", addr, err)
 	}
-	return NewPeer(id, addr, conn), nil
+	return NewPeer(id, addr, conn, writeTimeoutSec, readTimeoutSec, maxMsgSize), nil
 }
 
 // Send writes a length-prefixed JSON message to the peer.
@@ -83,7 +86,7 @@ func (p *Peer) Send(msg Message) error {
 	if p.closed {
 		return fmt.Errorf("peer %s closed", p.ID)
 	}
-	if err := p.conn.SetWriteDeadline(time.Now().Add(peerWriteTimeout)); err != nil {
+	if err := p.conn.SetWriteDeadline(time.Now().Add(p.writeTimeout)); err != nil {
 		return fmt.Errorf("set write deadline: %w", err)
 	}
 	// 4-byte big-endian length prefix
@@ -99,7 +102,7 @@ func (p *Peer) Send(msg Message) error {
 // Receive reads the next length-prefixed JSON message.
 // A 5-minute read deadline prevents a stalled peer from blocking indefinitely.
 func (p *Peer) Receive() (Message, error) {
-	if err := p.conn.SetReadDeadline(time.Now().Add(peerReadTimeout)); err != nil {
+	if err := p.conn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
 		return Message{}, fmt.Errorf("set read deadline: %w", err)
 	}
 	var header [4]byte
@@ -107,7 +110,7 @@ func (p *Peer) Receive() (Message, error) {
 		return Message{}, err
 	}
 	length := binary.BigEndian.Uint32(header[:])
-	if length > maxMessageSize {
+	if length > p.maxMessageSize {
 		return Message{}, fmt.Errorf("message too large: %d bytes", length)
 	}
 	buf := make([]byte, length)

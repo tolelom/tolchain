@@ -13,7 +13,7 @@ import (
 
 func TestSSEAuthRequired(t *testing.T) {
 	emitter := events.NewEmitter()
-	broker := rpc.NewSSEBroker(emitter, "secret-token")
+	broker := rpc.NewSSEBroker(emitter, "secret-token", 64)
 
 	server := httptest.NewServer(broker)
 	defer server.Close()
@@ -30,7 +30,7 @@ func TestSSEAuthRequired(t *testing.T) {
 
 func TestSSEBrokerBroadcast(t *testing.T) {
 	emitter := events.NewEmitter()
-	broker := rpc.NewSSEBroker(emitter, "")
+	broker := rpc.NewSSEBroker(emitter, "", 64)
 
 	// Use a pipe-based recorder that supports flushing
 	pr, pw := newPipeResponseWriter()

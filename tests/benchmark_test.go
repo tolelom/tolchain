@@ -77,11 +77,11 @@ func BenchmarkMempoolAdd(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	mp := core.NewMempool()
+	mp := core.NewMempool(10000, 3600, 300)
 	for i := 0; i < b.N; i++ {
 		// Reset mempool every 9000 txs to avoid hitting the 10,000 cap.
 		if i > 0 && i%9000 == 0 {
-			mp = core.NewMempool()
+			mp = core.NewMempool(10000, 3600, 300)
 		}
 		if err := mp.Add(txs[i]); err != nil {
 			b.Fatal(err)
@@ -90,7 +90,7 @@ func BenchmarkMempoolAdd(b *testing.B) {
 }
 
 func BenchmarkMempoolPending(b *testing.B) {
-	mp := core.NewMempool()
+	mp := core.NewMempool(10000, 3600, 300)
 	w, _ := wallet.Generate()
 
 	for i := 0; i < 1000; i++ {
@@ -253,12 +253,13 @@ func BenchmarkProduceBlock(b *testing.B) {
 			Alloc:   map[string]uint64{w.PubKey(): 1_000_000_000},
 		},
 	}
+	cfg.ApplyDefaults()
 
 	genesis, _ := config.CreateGenesisBlock(cfg, state, w.PrivKey())
 	bc.AddBlock(genesis)
 
 	emitter := events.NewEmitter()
-	mempool := core.NewMempool()
+	mempool := core.NewMempool(10000, 3600, 300)
 	exec := vm.NewExecutor(state, emitter)
 	poa := consensus.New(cfg, bc, state, mempool, exec, emitter, w.PrivKey())
 

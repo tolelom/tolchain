@@ -1,13 +1,9 @@
 package core
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 )
-
-// ErrNotFound is returned when a requested object does not exist in storage.
-var ErrNotFound = errors.New("not found")
 
 // BlockStore is the persistence interface used by Blockchain.
 // Implementations live in the storage package.
@@ -16,6 +12,9 @@ type BlockStore interface {
 	PutBlock(block *Block) error
 	GetBlockByHeight(height int64) (*Block, error)
 	PutBlockByHeight(height int64, hash string) error
+	// GetBlockRange returns up to limit blocks starting from fromHeight.
+	// It stops early if a height has no block (end of chain).
+	GetBlockRange(fromHeight int64, limit int) ([]*Block, error)
 	// GetTip returns the current tip hash, or ("", nil) for a fresh chain.
 	GetTip() (string, error)
 	SetTip(hash string) error
@@ -104,6 +103,13 @@ func (bc *Blockchain) GetBlockByHeight(height int64) (*Block, error) {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 	return bc.store.GetBlockByHeight(height)
+}
+
+// GetBlockRange returns up to limit blocks starting from fromHeight.
+func (bc *Blockchain) GetBlockRange(fromHeight int64, limit int) ([]*Block, error) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.store.GetBlockRange(fromHeight, limit)
 }
 
 // Tip returns the current chain tip, or nil for a fresh chain.

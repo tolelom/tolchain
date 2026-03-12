@@ -3,10 +3,8 @@ package economy
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 
 	"github.com/tolelom/tolchain/core"
-	"github.com/tolelom/tolchain/crypto"
 	"github.com/tolelom/tolchain/events"
 	"github.com/tolelom/tolchain/vm"
 )
@@ -23,11 +21,8 @@ func handleTransfer(ctx *vm.Context, payload json.RawMessage) error {
 	if p.Amount == 0 {
 		return fmt.Errorf("transfer amount must be > 0")
 	}
-	if p.To == "" {
-		return fmt.Errorf("transfer to address required")
-	}
-	if _, err := crypto.PubKeyFromHex(p.To); err != nil {
-		return fmt.Errorf("invalid to address: %w", err)
+	if err := vm.ValidatePubKey(p.To, "to address"); err != nil {
+		return err
 	}
 
 	sender, err := ctx.State.GetAccount(ctx.Tx.From)
@@ -35,7 +30,7 @@ func handleTransfer(ctx *vm.Context, payload json.RawMessage) error {
 		return err
 	}
 	if sender.Balance < p.Amount {
-		return fmt.Errorf("insufficient balance: have %d, need %d", sender.Balance, p.Amount)
+		return fmt.Errorf("insufficient balance: have %d, need %d: %w", sender.Balance, p.Amount, core.ErrInsufficientBalance)
 	}
 	sender.Balance -= p.Amount
 	if err := ctx.State.SetAccount(sender); err != nil {
@@ -46,10 +41,11 @@ func handleTransfer(ctx *vm.Context, payload json.RawMessage) error {
 	if err != nil {
 		return err
 	}
-	if recipient.Balance > math.MaxUint64-p.Amount {
-		return fmt.Errorf("recipient balance overflow")
+	newBal, err := vm.SafeAdd(recipient.Balance, p.Amount)
+	if err != nil {
+		return fmt.Errorf("recipient balance overflow: %w", err)
 	}
-	recipient.Balance += p.Amount
+	recipient.Balance = newBal
 	if err := ctx.State.SetAccount(recipient); err != nil {
 		return err
 	}

@@ -174,8 +174,6 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 const (
 	// defaultMaxBlockTxs is the fallback limit when Config.MaxBlockTxs is not set.
 	defaultMaxBlockTxs = 500
-	// maxBlockTimeDrift is the maximum allowed clock drift for incoming blocks.
-	maxBlockTimeDrift = int64(15 * time.Second)
 )
 
 // ValidateBlock checks that block was proposed by the expected validator.
@@ -212,7 +210,8 @@ func (p *PoA) ValidateBlock(block *core.Block) error {
 	// (C) Timestamp validation: must not be too far in the future
 	// and must be >= the previous block's timestamp.
 	now := time.Now().UnixNano()
-	if block.Header.Timestamp > now+maxBlockTimeDrift {
+	maxTimeDrift := int64(p.cfg.Consensus.MaxTimeDriftSec) * int64(time.Second)
+	if block.Header.Timestamp > now+maxTimeDrift {
 		return fmt.Errorf("block timestamp too far in future: %d (now %d)", block.Header.Timestamp, now)
 	}
 

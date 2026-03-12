@@ -24,14 +24,14 @@ func handleRegisterTemplate(ctx *vm.Context, payload json.RawMessage) error {
 	}
 
 	// Operator restriction: only authorised operators can register templates.
-	if len(ctx.Operators) > 0 && !ctx.Operators[ctx.Tx.From] {
-		return errors.New("only authorised operators can register templates")
+	if err := vm.RequireOperator(ctx); err != nil {
+		return err
 	}
 
 	// Prevent overwriting an existing template
 	_, err := ctx.State.GetTemplate(p.ID)
 	if err == nil {
-		return fmt.Errorf("template %q already exists", p.ID)
+		return fmt.Errorf("template %q already exists: %w", p.ID, core.ErrAlreadyExists)
 	}
 	if !errors.Is(err, core.ErrNotFound) {
 		return fmt.Errorf("check template %q: %w", p.ID, err)

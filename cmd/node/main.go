@@ -61,8 +61,7 @@ func main() {
 			slog.Error("save key failed", "error", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Generated key. Public key (validator address): %s\n", w.PubKey())
-		fmt.Printf("Saved to: %s\n", *keyPath)
+		slog.Info("key generated", "pubkey", w.PubKey(), "path", *keyPath)
 		return
 	}
 
@@ -77,7 +76,7 @@ func main() {
 			slog.Error("gencerts failed", "error", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Certificates generated in %s for node %q\n", *genCerts, cfgForCerts.NodeID)
+		slog.Info("certificates generated", "dir", *genCerts, "node_id", cfgForCerts.NodeID)
 		return
 	}
 
@@ -144,7 +143,7 @@ func main() {
 	idx := indexer.New(db, emitter)
 
 	// ---- mempool ----
-	mempool := core.NewMempool()
+	mempool := core.NewMempool(cfg.Mempool.MaxSize, cfg.Mempool.MaxTxAgeSec, cfg.Mempool.MaxFutureSec)
 
 	// ---- VM executor ----
 	exec := vm.NewExecutor(state, emitter)
@@ -165,8 +164,8 @@ func main() {
 
 	// ---- network ----
 	p2pAddr := fmt.Sprintf(":%d", cfg.P2PPort)
-	node := network.NewNode(cfg.NodeID, p2pAddr, cfg.Genesis.ChainID, mempool, tlsCfg)
-	syncer := network.NewSyncer(node, bc, poa, exec, state, emitter, mempool)
+	node := network.NewNode(cfg.NodeID, p2pAddr, cfg.Genesis.ChainID, mempool, tlsCfg, cfg.Network.MaxPeers, cfg.Network.WriteTimeoutSec, cfg.Network.ReadTimeoutSec, cfg.Network.MaxMessageSize)
+	syncer := network.NewSyncer(node, bc, poa, exec, state, emitter, mempool, cfg.Network.SyncBatchSize, cfg.Network.MaxSyncBatchSize)
 	if err := node.Start(); err != nil {
 		slog.Error("p2p start failed", "error", err)
 		os.Exit(1)
@@ -241,7 +240,7 @@ func main() {
 	// ---- RPC ----
 	rpcAddr := fmt.Sprintf(":%d", cfg.RPCPort)
 	rpcHandler := rpc.NewHandler(bc, mempool, state, idx, cfg.Genesis.ChainID)
-	sseBroker := rpc.NewSSEBroker(emitter, cfg.RPCAuthToken)
+	sseBroker := rpc.NewSSEBroker(emitter, cfg.RPCAuthToken, cfg.RPC.SSEBufferSize)
 	statusFunc := func() any {
 		tip := bc.Tip()
 		var blockHeight int64
@@ -261,7 +260,7 @@ func main() {
 			"version":        "0.1.0",
 		}
 	}
-	rpcServer := rpc.NewServer(rpcAddr, rpcHandler, cfg.RPCAuthToken, sseBroker, statusFunc)
+	rpcServer := rpc.NewServer(rpcAddr, rpcHandler, cfg.RPCAuthToken, sseBroker, statusFunc, cfg.RPC.RateLimit, cfg.RPC.RateBurst, cfg.RPC.ReadTimeoutSec, cfg.RPC.WriteTimeoutSec, cfg.RPC.IdleTimeoutSec, cfg.RPC.MaxBodySize)
 	if err := rpcServer.Start(); err != nil {
 		slog.Error("rpc start failed", "error", err)
 		os.Exit(1)
@@ -276,7 +275,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		poa.Run(2*time.Second, done)
+		poa.Run(time.Duration(cfg.Consensus.BlockIntervalSec)*time.Second, done)
 	}()
 	slog.Info("consensus running", "validator", privKey.Public().Hex())
 

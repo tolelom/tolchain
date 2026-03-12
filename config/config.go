@@ -16,6 +16,40 @@ const (
 	DefaultMaxBlockTxs = 500
 )
 
+// MempoolConfig controls transaction pool behavior.
+type MempoolConfig struct {
+	MaxSize      int `json:"max_size,omitempty"`       // max txs in pool; 0 → 10000
+	MaxTxAgeSec  int `json:"max_tx_age_sec,omitempty"` // max past timestamp drift in seconds; 0 → 3600
+	MaxFutureSec int `json:"max_future_sec,omitempty"` // max future timestamp drift in seconds; 0 → 300
+}
+
+// NetworkConfig controls P2P networking.
+type NetworkConfig struct {
+	MaxPeers         int `json:"max_peers,omitempty"`           // 0 → 50
+	WriteTimeoutSec  int `json:"write_timeout_sec,omitempty"`   // 0 → 30
+	ReadTimeoutSec   int `json:"read_timeout_sec,omitempty"`    // 0 → 300
+	MaxMessageSize   int `json:"max_message_size,omitempty"`    // bytes; 0 → 10485760 (10MB)
+	SyncBatchSize    int `json:"sync_batch_size,omitempty"`     // 0 → 50
+	MaxSyncBatchSize int `json:"max_sync_batch_size,omitempty"` // 0 → 200
+}
+
+// RPCServerConfig controls JSON-RPC server behavior.
+type RPCServerConfig struct {
+	RateLimit      float64 `json:"rate_limit,omitempty"`        // requests/sec per IP; 0 → 100
+	RateBurst      int     `json:"rate_burst,omitempty"`        // burst size; 0 → 200
+	ReadTimeoutSec  int    `json:"read_timeout_sec,omitempty"`  // 0 → 30
+	WriteTimeoutSec int    `json:"write_timeout_sec,omitempty"` // 0 → 30
+	IdleTimeoutSec  int    `json:"idle_timeout_sec,omitempty"`  // 0 → 60
+	MaxBodySize     int64  `json:"max_body_size,omitempty"`     // bytes; 0 → 1048576 (1MB)
+	SSEBufferSize   int    `json:"sse_buffer_size,omitempty"`   // 0 → 64
+}
+
+// ConsensusConfig controls block production.
+type ConsensusConfig struct {
+	BlockIntervalSec int `json:"block_interval_sec,omitempty"` // 0 → 2
+	MaxTimeDriftSec  int `json:"max_time_drift_sec,omitempty"` // 0 → 15
+}
+
 // TLSConfig holds paths to the PEM files needed for mTLS.
 // When nil or all paths empty, the node falls back to plain TCP.
 type TLSConfig struct {
@@ -49,11 +83,73 @@ type Config struct {
 	SeedPeers    []SeedPeer    `json:"seed_peers,omitempty"`     // initial peers to connect to
 	TLS          *TLSConfig    `json:"tls,omitempty"`           // nil → plain TCP
 	RPCAuthToken string        `json:"rpc_auth_token,omitempty"` // empty → no auth
+	Mempool      MempoolConfig    `json:"mempool,omitempty"`
+	Network      NetworkConfig    `json:"network,omitempty"`
+	RPC          RPCServerConfig  `json:"rpc,omitempty"`
+	Consensus    ConsensusConfig  `json:"consensus,omitempty"`
+}
+
+// ApplyDefaults fills zero-valued fields with sensible defaults.
+func (c *Config) ApplyDefaults() {
+	if c.Mempool.MaxSize == 0 {
+		c.Mempool.MaxSize = 10000
+	}
+	if c.Mempool.MaxTxAgeSec == 0 {
+		c.Mempool.MaxTxAgeSec = 3600
+	}
+	if c.Mempool.MaxFutureSec == 0 {
+		c.Mempool.MaxFutureSec = 300
+	}
+	if c.Network.MaxPeers == 0 {
+		c.Network.MaxPeers = 50
+	}
+	if c.Network.WriteTimeoutSec == 0 {
+		c.Network.WriteTimeoutSec = 30
+	}
+	if c.Network.ReadTimeoutSec == 0 {
+		c.Network.ReadTimeoutSec = 300
+	}
+	if c.Network.MaxMessageSize == 0 {
+		c.Network.MaxMessageSize = 10 * 1024 * 1024
+	}
+	if c.Network.SyncBatchSize == 0 {
+		c.Network.SyncBatchSize = 50
+	}
+	if c.Network.MaxSyncBatchSize == 0 {
+		c.Network.MaxSyncBatchSize = 200
+	}
+	if c.RPC.RateLimit == 0 {
+		c.RPC.RateLimit = 100
+	}
+	if c.RPC.RateBurst == 0 {
+		c.RPC.RateBurst = 200
+	}
+	if c.RPC.ReadTimeoutSec == 0 {
+		c.RPC.ReadTimeoutSec = 30
+	}
+	if c.RPC.WriteTimeoutSec == 0 {
+		c.RPC.WriteTimeoutSec = 30
+	}
+	if c.RPC.IdleTimeoutSec == 0 {
+		c.RPC.IdleTimeoutSec = 60
+	}
+	if c.RPC.MaxBodySize == 0 {
+		c.RPC.MaxBodySize = 1024 * 1024
+	}
+	if c.RPC.SSEBufferSize == 0 {
+		c.RPC.SSEBufferSize = 64
+	}
+	if c.Consensus.BlockIntervalSec == 0 {
+		c.Consensus.BlockIntervalSec = 2
+	}
+	if c.Consensus.MaxTimeDriftSec == 0 {
+		c.Consensus.MaxTimeDriftSec = 15
+	}
 }
 
 // DefaultConfig returns a single-node development configuration.
 func DefaultConfig() *Config {
-	return &Config{
+	cfg := &Config{
 		NodeID:      "node0",
 		DataDir:     "./data",
 		RPCPort:     DefaultRPCPort,
@@ -64,6 +160,8 @@ func DefaultConfig() *Config {
 			Alloc:   map[string]uint64{},
 		},
 	}
+	cfg.ApplyDefaults()
+	return cfg
 }
 
 // Load reads a JSON config file from path and validates required fields.
@@ -76,6 +174,7 @@ func Load(path string) (*Config, error) {
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
+	cfg.ApplyDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("config validation: %w", err)
 	}
