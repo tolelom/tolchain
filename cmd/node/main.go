@@ -181,23 +181,62 @@ func main() {
 		}
 	})
 
+	// ---- shutdown coordination ----
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+
 	// ---- connect to seed peers ----
-	connectedSeeds := 0
-	for _, sp := range cfg.SeedPeers {
-		if err := node.AddPeer(sp.ID, sp.Addr); err != nil {
-			slog.Warn("seed peer connection failed", "peer_id", sp.ID, "addr", sp.Addr, "error", err)
-			continue
+	connectSeeds := func() int {
+		connected := 0
+		for _, sp := range cfg.SeedPeers {
+			// Skip already connected peers.
+			if node.Peer(sp.ID) != nil {
+				connected++
+				continue
+			}
+			if err := node.AddPeer(sp.ID, sp.Addr); err != nil {
+				slog.Warn("seed peer connection failed", "peer_id", sp.ID, "addr", sp.Addr, "error", err)
+				continue
+			}
+			if peer := node.Peer(sp.ID); peer != nil {
+				syncer.SyncWithPeer(peer)
+			}
+			connected++
+			slog.Info("connected to seed peer", "peer_id", sp.ID, "addr", sp.Addr)
 		}
-		// Trigger initial block sync with the newly connected peer.
-		if peer := node.Peer(sp.ID); peer != nil {
-			syncer.SyncWithPeer(peer)
-		}
-		connectedSeeds++
-		slog.Info("connected to seed peer", "peer_id", sp.ID, "addr", sp.Addr)
+		return connected
 	}
-	if len(cfg.SeedPeers) > 0 && connectedSeeds == 0 {
+	if connectedSeeds := connectSeeds(); len(cfg.SeedPeers) > 0 && connectedSeeds == 0 {
 		slog.Warn("failed to connect to any seed peer — node is isolated")
 	}
+
+	// Background goroutine retries disconnected seed peers with exponential backoff.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		interval := 5 * time.Second
+		maxInterval := 2 * time.Minute
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if connectSeeds() == len(cfg.SeedPeers) {
+					// All seeds connected — reset backoff.
+					interval = 5 * time.Second
+				} else {
+					// Increase backoff up to max.
+					interval = interval * 2
+					if interval > maxInterval {
+						interval = maxInterval
+					}
+				}
+				ticker.Reset(interval)
+			}
+		}
+	}()
 
 	// ---- RPC ----
 	rpcAddr := fmt.Sprintf(":%d", cfg.RPCPort)
@@ -234,8 +273,6 @@ func main() {
 	}
 
 	// ---- consensus loop ----
-	done := make(chan struct{})
-	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

@@ -42,25 +42,23 @@ func handleSessionOpen(ctx *vm.Context, payload json.RawMessage) error {
 		return fmt.Errorf("checking session %q: %w", p.SessionID, err)
 	}
 
-	// When stakes are involved, verify that every player (except tx sender)
-	// has signed "session:<sessionID>" to prove consent.
-	if p.Stakes > 0 {
-		consentMsg := []byte("session:" + p.SessionID)
-		for _, player := range p.Players {
-			if player == ctx.Tx.From {
-				continue // the sender implicitly consents by submitting the tx
-			}
-			sig, ok := p.Signatures[player]
-			if !ok || sig == "" {
-				return fmt.Errorf("missing consent signature from player %q", player)
-			}
-			pub, err := crypto.PubKeyFromHex(player)
-			if err != nil {
-				return fmt.Errorf("invalid player pubkey %q: %w", player, err)
-			}
-			if err := crypto.Verify(pub, consentMsg, sig); err != nil {
-				return fmt.Errorf("invalid consent signature from player %q: %w", player, err)
-			}
+	// Verify that every player (except tx sender) has signed
+	// "session:<sessionID>" to prove consent — regardless of stakes.
+	consentMsg := []byte("session:" + p.SessionID)
+	for _, player := range p.Players {
+		if player == ctx.Tx.From {
+			continue // the sender implicitly consents by submitting the tx
+		}
+		sig, ok := p.Signatures[player]
+		if !ok || sig == "" {
+			return fmt.Errorf("missing consent signature from player %q", player)
+		}
+		pub, err := crypto.PubKeyFromHex(player)
+		if err != nil {
+			return fmt.Errorf("invalid player pubkey %q: %w", player, err)
+		}
+		if err := crypto.Verify(pub, consentMsg, sig); err != nil {
+			return fmt.Errorf("invalid consent signature from player %q: %w", player, err)
 		}
 	}
 

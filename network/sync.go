@@ -89,6 +89,7 @@ func (s *Syncer) RequestBlocks(peer *Peer, fromHeight int64) error {
 func (s *Syncer) handleGetBlocks(peer *Peer, msg Message) {
 	var req GetBlocksRequest
 	if err := json.Unmarshal(msg.Payload, &req); err != nil {
+		slog.Error("unmarshal GetBlocks request", "component", "sync", "peer", peer.ID, "error", err)
 		return
 	}
 	if req.Limit <= 0 || req.Limit > maxSyncBatchSize {
@@ -115,6 +116,7 @@ func (s *Syncer) handleGetBlocks(peer *Peer, msg Message) {
 func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 	var resp BlocksResponse
 	if err := json.Unmarshal(msg.Payload, &resp); err != nil {
+		slog.Error("unmarshal Blocks response", "component", "sync", "peer", peer.ID, "error", err)
 		return
 	}
 	for _, b := range resp.Blocks {
