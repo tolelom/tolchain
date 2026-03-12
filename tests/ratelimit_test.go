@@ -15,7 +15,7 @@ import (
 func TestRateLimitExceeded(t *testing.T) {
 	handler := newTestRPCHandler(t)
 	// Start server with rate limit applied (default: 100 req/s, burst 200).
-	srv := rpc.NewServer(":0", handler, "", nil, nil)
+	srv := rpc.NewServer(":0", handler, "", nil, nil, 100, 200, 30, 30, 60, 1024*1024)
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestRateLimitExceeded(t *testing.T) {
 // TestMetricsEndpoint verifies that /metrics returns Prometheus metrics.
 func TestMetricsEndpoint(t *testing.T) {
 	handler := newTestRPCHandler(t)
-	srv := rpc.NewServer(":0", handler, "", nil, nil)
+	srv := rpc.NewServer(":0", handler, "", nil, nil, 100, 200, 30, 30, 60, 1024*1024)
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestMetricsEndpoint(t *testing.T) {
 // TestRateLimitAllowsNormalTraffic ensures moderate traffic is not blocked.
 func TestRateLimitAllowsNormalTraffic(t *testing.T) {
 	handler := newTestRPCHandler(t)
-	srv := rpc.NewServer(":0", handler, "", nil, nil)
+	srv := rpc.NewServer(":0", handler, "", nil, nil, 100, 200, 30, 30, 60, 1024*1024)
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}

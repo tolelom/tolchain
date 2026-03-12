@@ -31,13 +31,13 @@ func handleSessionOpen(ctx *vm.Context, payload json.RawMessage) error {
 	}
 
 	// Operator restriction: only authorised operators can open sessions.
-	if len(ctx.Operators) > 0 && !ctx.Operators[ctx.Tx.From] {
-		return errors.New("only authorised operators can open sessions")
+	if err := vm.RequireOperator(ctx); err != nil {
+		return err
 	}
 
 	// Check session doesn't already exist; distinguish DB errors from not-found.
 	if _, err := ctx.State.GetSession(p.SessionID); err == nil {
-		return fmt.Errorf("session %q already exists", p.SessionID)
+		return fmt.Errorf("session %q already exists: %w", p.SessionID, core.ErrAlreadyExists)
 	} else if !errors.Is(err, core.ErrNotFound) {
 		return fmt.Errorf("checking session %q: %w", p.SessionID, err)
 	}
@@ -53,10 +53,10 @@ func handleSessionOpen(ctx *vm.Context, payload json.RawMessage) error {
 		if !ok || sig == "" {
 			return fmt.Errorf("missing consent signature from player %q", player)
 		}
-		pub, err := crypto.PubKeyFromHex(player)
-		if err != nil {
-			return fmt.Errorf("invalid player pubkey %q: %w", player, err)
+		if err := vm.ValidatePubKey(player, fmt.Sprintf("player pubkey %q", player)); err != nil {
+			return err
 		}
+		pub, _ := crypto.PubKeyFromHex(player)
 		if err := crypto.Verify(pub, consentMsg, sig); err != nil {
 			return fmt.Errorf("invalid consent signature from player %q: %w", player, err)
 		}
@@ -70,8 +70,8 @@ func handleSessionOpen(ctx *vm.Context, payload json.RawMessage) error {
 				return fmt.Errorf("player %q account: %w", player, err)
 			}
 			if acc.Balance < p.Stakes {
-				return fmt.Errorf("player %q insufficient balance for stakes: have %d need %d",
-					player, acc.Balance, p.Stakes)
+				return fmt.Errorf("player %q insufficient balance for stakes: have %d need %d: %w",
+					player, acc.Balance, p.Stakes, core.ErrInsufficientBalance)
 			}
 			acc.Balance -= p.Stakes
 			if err := ctx.State.SetAccount(acc); err != nil {
@@ -120,7 +120,7 @@ func handleSessionResult(ctx *vm.Context, payload json.RawMessage) error {
 	}
 	// Only the session creator (game server / oracle that opened it) can submit results.
 	if ctx.Tx.From != sess.Creator {
-		return fmt.Errorf("only the session creator can submit results")
+		return fmt.Errorf("only the session creator can submit results: %w", core.ErrUnauthorized)
 	}
 
 	// Build a set of valid players to reject payouts to arbitrary addresses.
@@ -159,10 +159,11 @@ func handleSessionResult(ctx *vm.Context, payload json.RawMessage) error {
 		if err != nil {
 			return fmt.Errorf("outcome account %q: %w", pubkey, err)
 		}
-		if acc.Balance > math.MaxUint64-reward {
-			return fmt.Errorf("reward overflow for player %q", pubkey)
+		newBal, err := vm.SafeAdd(acc.Balance, reward)
+		if err != nil {
+			return fmt.Errorf("reward overflow for player %q: %w", pubkey, err)
 		}
-		acc.Balance += reward
+		acc.Balance = newBal
 		if err := ctx.State.SetAccount(acc); err != nil {
 			return err
 		}
@@ -200,12 +201,12 @@ func handleSessionCancel(ctx *vm.Context, payload json.RawMessage) error {
 		return fmt.Errorf("session %q is not open (status=%s)", p.SessionID, sess.Status)
 	}
 	if ctx.Tx.From != sess.Creator {
-		return errors.New("only the session creator can cancel it")
+		return fmt.Errorf("only the session creator can cancel it: %w", core.ErrUnauthorized)
 	}
 
 	// Operator restriction.
-	if len(ctx.Operators) > 0 && !ctx.Operators[ctx.Tx.From] {
-		return errors.New("only authorised operators can cancel sessions")
+	if err := vm.RequireOperator(ctx); err != nil {
+		return err
 	}
 
 	// Refund stakes to all players.
@@ -215,10 +216,11 @@ func handleSessionCancel(ctx *vm.Context, payload json.RawMessage) error {
 			if err != nil {
 				return fmt.Errorf("player %q account: %w", player, err)
 			}
-			if acc.Balance > math.MaxUint64-sess.Stakes {
-				return fmt.Errorf("player %q balance overflow on refund", player)
+			newBal, err := vm.SafeAdd(acc.Balance, sess.Stakes)
+			if err != nil {
+				return fmt.Errorf("player %q balance overflow on refund: %w", player, err)
 			}
-			acc.Balance += sess.Stakes
+			acc.Balance = newBal
 			if err := ctx.State.SetAccount(acc); err != nil {
 				return err
 			}

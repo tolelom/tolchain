@@ -8,10 +8,6 @@ import (
 )
 
 const (
-	// rateLimit is the sustained requests per second allowed per IP.
-	rateLimit = 100
-	// rateBurst is the maximum burst size above the sustained rate.
-	rateBurst = 200
 	// rateLimitCleanupInterval controls how often stale entries are removed.
 	rateLimitCleanupInterval = 5 * time.Minute
 	// rateLimitEntryTTL is how long an idle IP entry is kept.

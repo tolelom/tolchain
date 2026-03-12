@@ -165,6 +165,19 @@ func (s *MemBlockStore) GetBlockByHeight(height int64) (*core.Block, error) {
 	return s.GetBlock(h)
 }
 
+// GetBlockRange returns up to limit blocks starting from fromHeight.
+func (s *MemBlockStore) GetBlockRange(fromHeight int64, limit int) ([]*core.Block, error) {
+	blocks := make([]*core.Block, 0, limit)
+	for h := fromHeight; h < fromHeight+int64(limit); h++ {
+		b, err := s.GetBlockByHeight(h)
+		if err != nil {
+			break // no more blocks at this height
+		}
+		blocks = append(blocks, b)
+	}
+	return blocks, nil
+}
+
 func (s *MemBlockStore) GetTip() (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

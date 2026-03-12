@@ -11,22 +11,21 @@ import (
 	"github.com/tolelom/tolchain/events"
 )
 
-// sseEventBufferSize is the per-client event channel capacity.
-// Slow clients that exceed this buffer will have events dropped.
-const sseEventBufferSize = 64
-
 // SSEBroker manages SSE client connections and broadcasts chain events.
 type SSEBroker struct {
-	mu        sync.Mutex
-	clients   map[chan events.Event]map[events.EventType]bool // nil filter = all events
-	authToken string
+	mu             sync.Mutex
+	clients        map[chan events.Event]map[events.EventType]bool // nil filter = all events
+	authToken      string
+	eventBufSize   int
 }
 
 // NewSSEBroker creates a broker that subscribes to all event types on the emitter.
-func NewSSEBroker(emitter *events.Emitter, authToken string) *SSEBroker {
+// sseBufferSize controls the per-client event channel capacity.
+func NewSSEBroker(emitter *events.Emitter, authToken string, sseBufferSize int) *SSEBroker {
 	b := &SSEBroker{
-		clients:   make(map[chan events.Event]map[events.EventType]bool),
-		authToken: authToken,
+		clients:      make(map[chan events.Event]map[events.EventType]bool),
+		authToken:    authToken,
+		eventBufSize: sseBufferSize,
 	}
 	allTypes := []events.EventType{
 		events.EventBlockCommit, events.EventTxExecuted, events.EventTokenTransfer,
@@ -79,7 +78,7 @@ func (b *SSEBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	ch := make(chan events.Event, sseEventBufferSize)
+	ch := make(chan events.Event, b.eventBufSize)
 	var filter map[events.EventType]bool
 	if types := r.URL.Query().Get("types"); types != "" {
 		filter = make(map[events.EventType]bool)

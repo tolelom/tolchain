@@ -39,6 +39,7 @@ func newTestPoA(t *testing.T) (*consensus.PoA, *core.Blockchain, *wallet.Wallet)
 			Alloc:   map[string]uint64{w.PubKey(): 1_000_000},
 		},
 	}
+	cfg.ApplyDefaults()
 
 	genesis, err := config.CreateGenesisBlock(cfg, state, w.PrivKey())
 	if err != nil {
@@ -49,7 +50,7 @@ func newTestPoA(t *testing.T) (*consensus.PoA, *core.Blockchain, *wallet.Wallet)
 	}
 
 	emitter := events.NewEmitter()
-	mempool := core.NewMempool()
+	mempool := core.NewMempool(cfg.Mempool.MaxSize, cfg.Mempool.MaxTxAgeSec, cfg.Mempool.MaxFutureSec)
 	exec := vm.NewExecutor(state, emitter)
 	poa := consensus.New(cfg, bc, state, mempool, exec, emitter, w.PrivKey())
 
@@ -85,12 +86,13 @@ func TestIsProposer_MultipleValidators(t *testing.T) {
 			Alloc:   map[string]uint64{w1.PubKey(): 1_000_000},
 		},
 	}
+	cfg.ApplyDefaults()
 
 	genesis, _ := config.CreateGenesisBlock(cfg, state, w1.PrivKey())
 	_ = bc.AddBlock(genesis)
 
 	emitter := events.NewEmitter()
-	mempool := core.NewMempool()
+	mempool := core.NewMempool(cfg.Mempool.MaxSize, cfg.Mempool.MaxTxAgeSec, cfg.Mempool.MaxFutureSec)
 	exec := vm.NewExecutor(state, emitter)
 
 	// Genesis is height 0. Next height = 1. idx = 1 % 3 = 1 → w2.

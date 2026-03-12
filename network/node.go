@@ -16,17 +16,17 @@ import (
 // MessageHandler is called for each received message.
 type MessageHandler func(peer *Peer, msg Message)
 
-// DefaultMaxPeers is the default limit on simultaneous peer connections.
-const DefaultMaxPeers = 50
-
 // Node listens for incoming peers and manages outgoing connections.
 type Node struct {
-	nodeID     string
-	listenAddr string
-	chainID    string
-	mempool    *core.Mempool
-	tlsConfig  *tls.Config // nil → plain TCP
-	maxPeers   int
+	nodeID         string
+	listenAddr     string
+	chainID        string
+	mempool        *core.Mempool
+	tlsConfig      *tls.Config // nil → plain TCP
+	maxPeers       int
+	writeTimeoutSec int
+	readTimeoutSec  int
+	maxMessageSize  int
 
 	mu       sync.RWMutex
 	peers    map[string]*Peer
@@ -38,17 +38,21 @@ type Node struct {
 
 // NewNode creates a Node that will listen on listenAddr.
 // If tlsCfg is non-nil the listener and outgoing connections use TLS.
-func NewNode(nodeID, listenAddr, chainID string, mempool *core.Mempool, tlsCfg *tls.Config) *Node {
+// maxPeers, writeTimeoutSec, readTimeoutSec, maxMessageSize configure network limits.
+func NewNode(nodeID, listenAddr, chainID string, mempool *core.Mempool, tlsCfg *tls.Config, maxPeers, writeTimeoutSec, readTimeoutSec, maxMessageSize int) *Node {
 	n := &Node{
-		nodeID:     nodeID,
-		listenAddr: listenAddr,
-		chainID:    chainID,
-		mempool:    mempool,
-		tlsConfig:  tlsCfg,
-		maxPeers:   DefaultMaxPeers,
-		peers:      make(map[string]*Peer),
-		handlers:   make(map[MsgType]MessageHandler),
-		stopCh:     make(chan struct{}),
+		nodeID:          nodeID,
+		listenAddr:      listenAddr,
+		chainID:         chainID,
+		mempool:         mempool,
+		tlsConfig:       tlsCfg,
+		maxPeers:        maxPeers,
+		writeTimeoutSec: writeTimeoutSec,
+		readTimeoutSec:  readTimeoutSec,
+		maxMessageSize:  maxMessageSize,
+		peers:           make(map[string]*Peer),
+		handlers:        make(map[MsgType]MessageHandler),
+		stopCh:          make(chan struct{}),
 	}
 	// Register default handlers
 	n.Handle(MsgTx, n.handleTx)
@@ -95,7 +99,7 @@ func (n *Node) Stop() {
 
 // AddPeer dials addr and registers the peer.
 func (n *Node) AddPeer(id, addr string) error {
-	peer, err := Connect(id, addr, n.tlsConfig)
+	peer, err := Connect(id, addr, n.tlsConfig, n.writeTimeoutSec, n.readTimeoutSec, n.maxMessageSize)
 	if err != nil {
 		return err
 	}
@@ -192,7 +196,7 @@ func (n *Node) acceptLoop() {
 			conn.Close()
 			continue
 		}
-		peer := NewPeer(conn.RemoteAddr().String(), conn.RemoteAddr().String(), conn)
+		peer := NewPeer(conn.RemoteAddr().String(), conn.RemoteAddr().String(), conn, n.writeTimeoutSec, n.readTimeoutSec, n.maxMessageSize)
 		n.mu.Lock()
 		n.peers[peer.ID] = peer
 		n.mu.Unlock()

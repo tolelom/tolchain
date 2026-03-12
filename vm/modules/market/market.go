@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/crypto"
@@ -32,7 +31,7 @@ func handleListMarket(ctx *vm.Context, payload json.RawMessage) error {
 		return fmt.Errorf("asset %q not found: %w", p.AssetID, err)
 	}
 	if asset.Owner != ctx.Tx.From {
-		return errors.New("only the asset owner can list it")
+		return fmt.Errorf("only the asset owner can list it: %w", core.ErrUnauthorized)
 	}
 	if !asset.Tradeable {
 		return errors.New("asset is not tradeable")
@@ -42,7 +41,7 @@ func handleListMarket(ctx *vm.Context, payload json.RawMessage) error {
 	}
 	// Prevent double-listing the same asset.
 	if asset.ActiveListingID != "" {
-		return fmt.Errorf("asset %q is already listed (listing %s)", p.AssetID, asset.ActiveListingID)
+		return fmt.Errorf("asset %q is already listed (listing %s): %w", p.AssetID, asset.ActiveListingID, core.ErrAlreadyExists)
 	}
 
 	listingID := crypto.Hash([]byte(ctx.Tx.ID + ":listing:" + p.AssetID))
@@ -90,7 +89,7 @@ func handleBuyMarket(ctx *vm.Context, payload json.RawMessage) error {
 		return fmt.Errorf("listing %q is no longer active", p.ListingID)
 	}
 	if listing.Seller == ctx.Tx.From {
-		return errors.New("seller cannot buy their own listing")
+		return fmt.Errorf("seller cannot buy their own listing: %w", core.ErrUnauthorized)
 	}
 
 	// Deduct price from buyer
@@ -99,7 +98,7 @@ func handleBuyMarket(ctx *vm.Context, payload json.RawMessage) error {
 		return err
 	}
 	if buyer.Balance < listing.Price {
-		return fmt.Errorf("insufficient balance: have %d need %d", buyer.Balance, listing.Price)
+		return fmt.Errorf("insufficient balance: have %d need %d: %w", buyer.Balance, listing.Price, core.ErrInsufficientBalance)
 	}
 	buyer.Balance -= listing.Price
 	if err := ctx.State.SetAccount(buyer); err != nil {
@@ -111,10 +110,11 @@ func handleBuyMarket(ctx *vm.Context, payload json.RawMessage) error {
 	if err != nil {
 		return err
 	}
-	if seller.Balance > math.MaxUint64-listing.Price {
-		return fmt.Errorf("seller balance overflow")
+	newBal, err := vm.SafeAdd(seller.Balance, listing.Price)
+	if err != nil {
+		return fmt.Errorf("seller balance overflow: %w", err)
 	}
-	seller.Balance += listing.Price
+	seller.Balance = newBal
 	if err := ctx.State.SetAccount(seller); err != nil {
 		return err
 	}
@@ -167,7 +167,7 @@ func handleCancelListing(ctx *vm.Context, payload json.RawMessage) error {
 		return fmt.Errorf("listing %q is not active", p.ListingID)
 	}
 	if listing.Seller != ctx.Tx.From {
-		return errors.New("only the seller can cancel a listing")
+		return fmt.Errorf("only the seller can cancel a listing: %w", core.ErrUnauthorized)
 	}
 
 	// Deactivate listing.

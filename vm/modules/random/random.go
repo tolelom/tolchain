@@ -18,8 +18,8 @@ func init() {
 }
 
 func handleRandomCommit(ctx *vm.Context, payload json.RawMessage) error {
-	if ctx.Operators != nil && !ctx.Operators[ctx.Tx.From] {
-		return errors.New("random_commit requires operator authority")
+	if err := vm.RequireOperator(ctx); err != nil {
+		return err
 	}
 
 	var p core.RandomCommitPayload
@@ -36,7 +36,7 @@ func handleRandomCommit(ctx *vm.Context, payload json.RawMessage) error {
 	// Check for duplicate.
 	_, err := ctx.State.GetRandomCommitment(p.CommitID)
 	if err == nil {
-		return fmt.Errorf("commitment %q already exists", p.CommitID)
+		return fmt.Errorf("commitment %q already exists: %w", p.CommitID, core.ErrAlreadyExists)
 	}
 	if !errors.Is(err, core.ErrNotFound) {
 		return err
@@ -64,8 +64,8 @@ func handleRandomCommit(ctx *vm.Context, payload json.RawMessage) error {
 }
 
 func handleRandomReveal(ctx *vm.Context, payload json.RawMessage) error {
-	if ctx.Operators != nil && !ctx.Operators[ctx.Tx.From] {
-		return errors.New("random_reveal requires operator authority")
+	if err := vm.RequireOperator(ctx); err != nil {
+		return err
 	}
 
 	var p core.RandomRevealPayload

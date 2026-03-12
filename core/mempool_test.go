@@ -24,7 +24,7 @@ func newSignedTx(t *testing.T, chainID string, nonce uint64) *Transaction {
 }
 
 func TestMempool_AddAndGet(t *testing.T) {
-	mp := NewMempool()
+	mp := NewMempool(10000, 3600, 300)
 	tx := newSignedTx(t, "test", 0)
 
 	if err := mp.Add(tx); err != nil {
@@ -40,7 +40,7 @@ func TestMempool_AddAndGet(t *testing.T) {
 }
 
 func TestMempool_DuplicateRejected(t *testing.T) {
-	mp := NewMempool()
+	mp := NewMempool(10000, 3600, 300)
 	tx := newSignedTx(t, "test", 0)
 	mp.Add(tx)
 
@@ -50,7 +50,7 @@ func TestMempool_DuplicateRejected(t *testing.T) {
 }
 
 func TestMempool_DuplicateNonceRejected(t *testing.T) {
-	mp := NewMempool()
+	mp := NewMempool(10000, 3600, 300)
 	priv, pub, _ := crypto.GenerateKeyPair()
 	pubHex := pub.Hex()
 
@@ -67,7 +67,7 @@ func TestMempool_DuplicateNonceRejected(t *testing.T) {
 }
 
 func TestMempool_ExpiredRejected(t *testing.T) {
-	mp := NewMempool()
+	mp := NewMempool(10000, 3600, 300)
 	priv, pub, _ := crypto.GenerateKeyPair()
 	pubHex := pub.Hex()
 	tx, _ := NewTransaction("test", TxTransfer, pubHex, 0, 0, TransferPayload{To: pubHex, Amount: 1})
@@ -80,7 +80,7 @@ func TestMempool_ExpiredRejected(t *testing.T) {
 }
 
 func TestMempool_FutureTsRejected(t *testing.T) {
-	mp := NewMempool()
+	mp := NewMempool(10000, 3600, 300)
 	priv, pub, _ := crypto.GenerateKeyPair()
 	pubHex := pub.Hex()
 	tx, _ := NewTransaction("test", TxTransfer, pubHex, 0, 0, TransferPayload{To: pubHex, Amount: 1})
@@ -93,7 +93,7 @@ func TestMempool_FutureTsRejected(t *testing.T) {
 }
 
 func TestMempool_InvalidSigRejected(t *testing.T) {
-	mp := NewMempool()
+	mp := NewMempool(10000, 3600, 300)
 	tx := newSignedTx(t, "test", 0)
 	tx.Signature = "0000" // corrupt signature
 
@@ -103,7 +103,7 @@ func TestMempool_InvalidSigRejected(t *testing.T) {
 }
 
 func TestMempool_Pending_Order(t *testing.T) {
-	mp := NewMempool()
+	mp := NewMempool(10000, 3600, 300)
 	tx1 := newSignedTx(t, "test", 0)
 	tx2 := newSignedTx(t, "test", 0)
 	mp.Add(tx1)
@@ -119,7 +119,7 @@ func TestMempool_Pending_Order(t *testing.T) {
 }
 
 func TestMempool_Pending_Limit(t *testing.T) {
-	mp := NewMempool()
+	mp := NewMempool(10000, 3600, 300)
 	for i := 0; i < 5; i++ {
 		mp.Add(newSignedTx(t, "test", uint64(i)))
 	}
@@ -130,7 +130,7 @@ func TestMempool_Pending_Limit(t *testing.T) {
 }
 
 func TestMempool_Remove(t *testing.T) {
-	mp := NewMempool()
+	mp := NewMempool(10000, 3600, 300)
 	tx1 := newSignedTx(t, "test", 0)
 	tx2 := newSignedTx(t, "test", 0)
 	mp.Add(tx1)
@@ -150,7 +150,7 @@ func TestMempool_Remove(t *testing.T) {
 }
 
 func TestMempool_Remove_FreesNonce(t *testing.T) {
-	mp := NewMempool()
+	mp := NewMempool(10000, 3600, 300)
 	priv, pub, _ := crypto.GenerateKeyPair()
 	pubHex := pub.Hex()
 

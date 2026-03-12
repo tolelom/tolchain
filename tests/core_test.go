@@ -92,7 +92,7 @@ func TestBlockHash(t *testing.T) {
 
 // TestMempool verifies add/remove/pending operations.
 func TestMempool(t *testing.T) {
-	mp := core.NewMempool()
+	mp := core.NewMempool(10000, 3600, 300)
 	w, _ := wallet.Generate()
 
 	tx, _ := w.NewTx("test-chain", core.TxTransfer, 0, 0, core.TransferPayload{To: "aa", Amount: 1})

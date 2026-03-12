@@ -121,6 +121,7 @@ func startTestNode(t *testing.T, w *wallet.Wallet) (rpcURL string, cleanup func(
 			Alloc:   map[string]uint64{w.PubKey(): 10_000_000},
 		},
 	}
+	cfg.ApplyDefaults()
 
 	// Genesis
 	genesis, err := config.CreateGenesisBlock(cfg, stateDB, w.PrivKey())
@@ -133,20 +134,20 @@ func startTestNode(t *testing.T, w *wallet.Wallet) (rpcURL string, cleanup func(
 
 	emitter := events.NewEmitter()
 	idx := indexer.New(db, emitter)
-	mempool := core.NewMempool()
+	mempool := core.NewMempool(cfg.Mempool.MaxSize, cfg.Mempool.MaxTxAgeSec, cfg.Mempool.MaxFutureSec)
 	exec := vm.NewExecutor(stateDB, emitter)
 	poa := consensus.New(cfg, bc, stateDB, mempool, exec, emitter, w.PrivKey())
 
 	// P2P on random port
-	node := network.NewNode("test-node", ":0", testChainID, mempool, nil)
-	_ = network.NewSyncer(node, bc, poa, exec, stateDB, emitter, mempool)
+	node := network.NewNode("test-node", ":0", testChainID, mempool, nil, cfg.Network.MaxPeers, cfg.Network.WriteTimeoutSec, cfg.Network.ReadTimeoutSec, cfg.Network.MaxMessageSize)
+	_ = network.NewSyncer(node, bc, poa, exec, stateDB, emitter, mempool, cfg.Network.SyncBatchSize, cfg.Network.MaxSyncBatchSize)
 	if err := node.Start(); err != nil {
 		t.Fatal(err)
 	}
 
 	// RPC on random port
 	handler := rpc.NewHandler(bc, mempool, stateDB, idx, testChainID)
-	rpcServer := rpc.NewServer(":0", handler, "", nil, nil)
+	rpcServer := rpc.NewServer(":0", handler, "", nil, nil, cfg.RPC.RateLimit, cfg.RPC.RateBurst, cfg.RPC.ReadTimeoutSec, cfg.RPC.WriteTimeoutSec, cfg.RPC.IdleTimeoutSec, cfg.RPC.MaxBodySize)
 	if err := rpcServer.Start(); err != nil {
 		t.Fatal(err)
 	}

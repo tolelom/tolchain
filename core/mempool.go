@@ -9,25 +9,28 @@ import (
 	"github.com/tolelom/tolchain/metrics"
 )
 
-const (
-	maxMempoolSize = 10_000
-	maxTxAge       = int64(time.Hour)          // reject txs older than 1 hour
-	maxTxFuture    = int64(5 * time.Minute)    // reject txs more than 5 min in the future
-)
-
 // Mempool is a thread-safe pending-transaction pool.
 type Mempool struct {
-	mu     sync.RWMutex
-	txs    map[string]*Transaction
-	ord    []string                       // insertion-ordered IDs for deterministic pending iteration
-	nonces map[string]map[uint64]string   // sender → nonce → tx ID (prevents duplicate nonces)
+	mu        sync.RWMutex
+	txs       map[string]*Transaction
+	ord       []string                     // insertion-ordered IDs for deterministic pending iteration
+	nonces    map[string]map[uint64]string // sender → nonce → tx ID (prevents duplicate nonces)
+	maxSize   int
+	maxTxAge  int64         // nanoseconds
+	maxFuture int64         // nanoseconds
 }
 
-// NewMempool creates an empty mempool.
-func NewMempool() *Mempool {
+// NewMempool creates an empty mempool with the given limits.
+// maxSize is the maximum number of transactions in the pool.
+// maxTxAgeSec is the maximum past timestamp drift in seconds.
+// maxFutureSec is the maximum future timestamp drift in seconds.
+func NewMempool(maxSize int, maxTxAgeSec int, maxFutureSec int) *Mempool {
 	return &Mempool{
-		txs:    make(map[string]*Transaction),
-		nonces: make(map[string]map[uint64]string),
+		txs:       make(map[string]*Transaction),
+		nonces:    make(map[string]map[uint64]string),
+		maxSize:   maxSize,
+		maxTxAge:  int64(maxTxAgeSec) * int64(time.Second),
+		maxFuture: int64(maxFutureSec) * int64(time.Second),
 	}
 }
 
@@ -40,23 +43,23 @@ func (m *Mempool) Add(tx *Transaction) error {
 		return fmt.Errorf("invalid tx signature: %w", err)
 	}
 	now := time.Now().UnixNano()
-	if now > tx.Timestamp && now-tx.Timestamp > maxTxAge {
+	if now > tx.Timestamp && now-tx.Timestamp > m.maxTxAge {
 		metrics.MempoolRejected.WithLabelValues("expired").Inc()
 		return errors.New("transaction expired")
 	}
-	if tx.Timestamp > now && tx.Timestamp-now > maxTxFuture {
+	if tx.Timestamp > now && tx.Timestamp-now > m.maxFuture {
 		metrics.MempoolRejected.WithLabelValues("future_ts").Inc()
 		return errors.New("transaction timestamp too far in the future")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if len(m.txs) >= maxMempoolSize {
+	if len(m.txs) >= m.maxSize {
 		metrics.MempoolRejected.WithLabelValues("full").Inc()
 		return errors.New("mempool full")
 	}
 	if _, exists := m.txs[tx.ID]; exists {
 		metrics.MempoolRejected.WithLabelValues("duplicate").Inc()
-		return errors.New("tx already in pool")
+		return fmt.Errorf("tx already in pool: %w", ErrAlreadyExists)
 	}
 	// Reject duplicate nonce from the same sender.
 	if senderNonces, ok := m.nonces[tx.From]; ok {

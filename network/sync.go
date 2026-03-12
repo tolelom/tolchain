@@ -9,12 +9,6 @@ import (
 	"github.com/tolelom/tolchain/events"
 )
 
-const (
-	// defaultSyncBatchSize is the number of blocks requested per sync round.
-	defaultSyncBatchSize = 50
-	// maxSyncBatchSize is the upper bound for a peer's block request limit.
-	maxSyncBatchSize = 200
-)
 
 // GetBlocksRequest asks a peer for blocks starting at FromHeight.
 type GetBlocksRequest struct {
@@ -40,20 +34,23 @@ type BlockExecutor interface {
 
 // Syncer handles block synchronisation between nodes.
 type Syncer struct {
-	node      *Node
-	bc        *core.Blockchain
-	validator BlockValidator
-	exec      BlockExecutor // may be nil; if set, state is also required
-	state     core.State    // may be nil; used with exec to commit after each block
-	emitter   events.EventEmitter
-	mempool   *core.Mempool // may be nil; used to remove committed txs after sync
+	node             *Node
+	bc               *core.Blockchain
+	validator        BlockValidator
+	exec             BlockExecutor // may be nil; if set, state is also required
+	state            core.State    // may be nil; used with exec to commit after each block
+	emitter          events.EventEmitter
+	mempool          *core.Mempool // may be nil; used to remove committed txs after sync
+	syncBatchSize    int
+	maxSyncBatchSize int
 }
 
 // NewSyncer creates a Syncer that requests missing blocks from peers.
 // Pass non-nil exec and state so that synced blocks are fully applied to the
 // local state; without them the node will have blocks but no account/asset state.
-func NewSyncer(node *Node, bc *core.Blockchain, validator BlockValidator, exec BlockExecutor, state core.State, emitter events.EventEmitter, mempool *core.Mempool) *Syncer {
-	s := &Syncer{node: node, bc: bc, validator: validator, exec: exec, state: state, emitter: emitter, mempool: mempool}
+// syncBatchSize and maxSyncBatchSize control how many blocks are requested per round.
+func NewSyncer(node *Node, bc *core.Blockchain, validator BlockValidator, exec BlockExecutor, state core.State, emitter events.EventEmitter, mempool *core.Mempool, syncBatchSize, maxSyncBatchSize int) *Syncer {
+	s := &Syncer{node: node, bc: bc, validator: validator, exec: exec, state: state, emitter: emitter, mempool: mempool, syncBatchSize: syncBatchSize, maxSyncBatchSize: maxSyncBatchSize}
 	node.Handle(MsgHello, s.handleHello)
 	node.Handle(MsgGetBlocks, s.handleGetBlocks)
 	node.Handle(MsgBlocks, s.handleBlocks)
@@ -79,7 +76,7 @@ func (s *Syncer) SyncWithPeer(peer *Peer) {
 
 // RequestBlocks asks peer for blocks starting at fromHeight.
 func (s *Syncer) RequestBlocks(peer *Peer, fromHeight int64) error {
-	req, err := json.Marshal(GetBlocksRequest{FromHeight: fromHeight, Limit: defaultSyncBatchSize})
+	req, err := json.Marshal(GetBlocksRequest{FromHeight: fromHeight, Limit: s.syncBatchSize})
 	if err != nil {
 		return err
 	}
@@ -92,17 +89,10 @@ func (s *Syncer) handleGetBlocks(peer *Peer, msg Message) {
 		slog.Error("unmarshal GetBlocks request", "component", "sync", "peer", peer.ID, "error", err)
 		return
 	}
-	if req.Limit <= 0 || req.Limit > maxSyncBatchSize {
-		req.Limit = defaultSyncBatchSize
+	if req.Limit <= 0 || req.Limit > s.maxSyncBatchSize {
+		req.Limit = s.syncBatchSize
 	}
-	blocks := make([]*core.Block, 0, req.Limit)
-	for h := req.FromHeight; h < req.FromHeight+int64(req.Limit); h++ {
-		b, err := s.bc.GetBlockByHeight(h)
-		if err != nil {
-			break
-		}
-		blocks = append(blocks, b)
-	}
+	blocks, _ := s.bc.GetBlockRange(req.FromHeight, req.Limit)
 	data, err := json.Marshal(BlocksResponse{Blocks: blocks})
 	if err != nil {
 		slog.Error("marshal blocks response", "component", "sync", "error", err)
@@ -202,7 +192,7 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 	}
 
 	// If we received a full batch, there may be more blocks — keep requesting.
-	if len(resp.Blocks) >= defaultSyncBatchSize {
+	if len(resp.Blocks) >= s.syncBatchSize {
 		nextHeight := s.bc.Height() + 1
 		if err := s.RequestBlocks(peer, nextHeight); err != nil {
 			slog.Error("follow-up request failed", "component", "sync", "peer", peer.ID, "error", err)

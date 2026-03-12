@@ -19,7 +19,7 @@ func newTestRPCHandler(t *testing.T) *rpc.Handler {
 	state := storage.NewStateDB(db)
 	blockStore := testutil.NewMemBlockStore()
 	bc := core.NewBlockchain(blockStore)
-	mp := core.NewMempool()
+	mp := core.NewMempool(10000, 3600, 300)
 	emitter := events.NewEmitter()
 	idx := indexer.New(db, emitter)
 	return rpc.NewHandler(bc, mp, state, idx, "test-chain")

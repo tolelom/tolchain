@@ -2,9 +2,7 @@ package reward
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"math"
 
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/crypto"
@@ -17,19 +15,16 @@ func init() {
 }
 
 func handleGrantReward(ctx *vm.Context, payload json.RawMessage) error {
-	if ctx.Operators != nil && !ctx.Operators[ctx.Tx.From] {
-		return errors.New("grant_reward requires operator authority")
+	if err := vm.RequireOperator(ctx); err != nil {
+		return err
 	}
 
 	var p core.GrantRewardPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("decode grant_reward payload: %w", err)
 	}
-	if p.Recipient == "" {
-		return errors.New("recipient required")
-	}
-	if _, err := crypto.PubKeyFromHex(p.Recipient); err != nil {
-		return fmt.Errorf("invalid recipient pubkey: %w", err)
+	if err := vm.ValidatePubKey(p.Recipient, "recipient"); err != nil {
+		return err
 	}
 
 	// Credit tokens.
@@ -38,10 +33,11 @@ func handleGrantReward(ctx *vm.Context, payload json.RawMessage) error {
 		if err != nil {
 			return fmt.Errorf("get recipient account: %w", err)
 		}
-		if acc.Balance > math.MaxUint64-p.TokenAmount {
-			return errors.New("recipient balance overflow")
+		newBal, err := vm.SafeAdd(acc.Balance, p.TokenAmount)
+		if err != nil {
+			return fmt.Errorf("recipient balance overflow")
 		}
-		acc.Balance += p.TokenAmount
+		acc.Balance = newBal
 		if err := ctx.State.SetAccount(acc); err != nil {
 			return err
 		}

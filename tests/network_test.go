@@ -16,8 +16,8 @@ func TestPeerSendReceive(t *testing.T) {
 	defer c1.Close()
 	defer c2.Close()
 
-	sender := network.NewPeer("sender", "pipe", c1)
-	receiver := network.NewPeer("receiver", "pipe", c2)
+	sender := network.NewPeer("sender", "pipe", c1, 30, 300, 10*1024*1024)
+	receiver := network.NewPeer("receiver", "pipe", c2, 30, 300, 10*1024*1024)
 
 	payload, _ := json.Marshal(map[string]string{"hello": "world"})
 	msg := network.Message{Type: network.MsgPing, Payload: payload}
@@ -51,7 +51,7 @@ func TestPeerMessageSizeLimit(t *testing.T) {
 	defer c1.Close()
 	defer c2.Close()
 
-	receiver := network.NewPeer("receiver", "pipe", c2)
+	receiver := network.NewPeer("receiver", "pipe", c2, 30, 300, 10*1024*1024)
 
 	// Write a header claiming 11 MB (exceeds 10 MB limit)
 	go func() {
@@ -67,8 +67,8 @@ func TestPeerMessageSizeLimit(t *testing.T) {
 }
 
 func TestNodePeerCount(t *testing.T) {
-	mempool := core.NewMempool()
-	node := network.NewNode("test", ":0", testChainID, mempool, nil)
+	mempool := core.NewMempool(10000, 3600, 300)
+	node := network.NewNode("test", ":0", testChainID, mempool, nil, 50, 30, 300, 10*1024*1024)
 	if err := node.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestNodePeerCount(t *testing.T) {
 	}
 
 	// Connect a second node to the first
-	node2 := network.NewNode("test2", ":0", testChainID, core.NewMempool(), nil)
+	node2 := network.NewNode("test2", ":0", testChainID, core.NewMempool(10000, 3600, 300), nil, 50, 30, 300, 10*1024*1024)
 	if err := node2.Start(); err != nil {
 		t.Fatal(err)
 	}

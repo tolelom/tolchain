@@ -105,13 +105,13 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction) error {
 		return fmt.Errorf("get account: %w", err)
 	}
 	if acc.Nonce != tx.Nonce {
-		return fmt.Errorf("invalid nonce: expected %d got %d", acc.Nonce, tx.Nonce)
+		return fmt.Errorf("invalid nonce: expected %d got %d: %w", acc.Nonce, tx.Nonce, core.ErrInvalidNonce)
 	}
 	if acc.Balance < tx.Fee {
-		return fmt.Errorf("insufficient balance for fee: have %d need %d", acc.Balance, tx.Fee)
+		return fmt.Errorf("insufficient balance for fee: have %d need %d: %w", acc.Balance, tx.Fee, core.ErrInsufficientBalance)
 	}
 	if acc.Nonce == math.MaxUint64 {
-		return fmt.Errorf("nonce overflow for account %s", tx.From)
+		return fmt.Errorf("nonce overflow for account %s: %w", tx.From, core.ErrNonceOverflow)
 	}
 	acc.Balance -= tx.Fee
 	acc.Nonce++
@@ -128,10 +128,11 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction) error {
 		if err != nil {
 			return fmt.Errorf("get proposer account: %w", err)
 		}
-		if proposer.Balance > math.MaxUint64-tx.Fee {
-			return fmt.Errorf("proposer balance overflow")
+		newBal, err := SafeAdd(proposer.Balance, tx.Fee)
+		if err != nil {
+			return fmt.Errorf("proposer balance overflow: %w", core.ErrBalanceOverflow)
 		}
-		proposer.Balance += tx.Fee
+		proposer.Balance = newBal
 		if err := e.state.SetAccount(proposer); err != nil {
 			return fmt.Errorf("set proposer account: %w", err)
 		}
