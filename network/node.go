@@ -109,7 +109,7 @@ func (n *Node) AddPeer(id, addr string) error {
 	hello, err := json.Marshal(map[string]string{"node_id": n.nodeID})
 	if err != nil {
 		slog.Error("marshal hello", "component", "network", "error", err)
-		return nil
+		return fmt.Errorf("marshal hello: %w", err)
 	}
 	if err := peer.Send(Message{Type: MsgHello, Payload: hello}); err != nil {
 		slog.Error("send hello", "component", "network", "peer", id, "error", err)
