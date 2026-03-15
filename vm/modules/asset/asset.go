@@ -47,7 +47,7 @@ func handleMintAsset(ctx *vm.Context, payload json.RawMessage) error {
 	}
 
 	// Validate properties against template schema.
-	if err := validateSchema(tmpl.Schema, p.Properties); err != nil {
+	if err := ValidateSchema(tmpl.Schema, p.Properties); err != nil {
 		return fmt.Errorf("schema validation: %w", err)
 	}
 
@@ -154,10 +154,10 @@ func handleTransferAsset(ctx *vm.Context, payload json.RawMessage) error {
 	return nil
 }
 
-// validateSchema checks that properties conform to the template schema.
+// ValidateSchema checks that properties conform to the template schema.
 // Supported schema types: "string", "int", "bool". Extra properties not in
 // the schema are rejected. An empty/nil schema allows any properties.
-func validateSchema(schema map[string]any, properties map[string]any) error {
+func ValidateSchema(schema map[string]any, properties map[string]any) error {
 	if len(schema) == 0 {
 		return nil
 	}
