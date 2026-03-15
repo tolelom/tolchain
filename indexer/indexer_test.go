@@ -526,15 +526,22 @@ func TestRemoveFromList_EmptyList(t *testing.T) {
 
 // ---------- Corrupt data tests (cover json.Unmarshal error branches) ----------
 
-func TestGetAssetsByOwner_CorruptData(t *testing.T) {
+func TestGetAssetsByOwner_PrefixKeyApproach(t *testing.T) {
+	// With prefix-key indexing, each asset is stored as a separate key
+	// (idx:owner:asset:alice:asset1 → "1"), so there is no JSON to corrupt.
+	// This test verifies that the prefix-key iterator works correctly.
 	db := testutil.NewMemDB()
-	db.Set([]byte("idx:owner:asset:alice"), []byte("NOT-JSON"))
+	db.Set([]byte("idx:owner:asset:alice:asset1"), []byte("1"))
+	db.Set([]byte("idx:owner:asset:alice:asset2"), []byte("1"))
 	emitter := events.NewEmitter()
 	idx := indexer.New(db, emitter)
 
-	_, err := idx.GetAssetsByOwner("alice")
-	if err == nil {
-		t.Fatal("expected error for corrupt data, got nil")
+	assets, err := idx.GetAssetsByOwner("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assets) != 2 {
+		t.Fatalf("expected 2 assets, got %d", len(assets))
 	}
 }
 
@@ -550,39 +557,52 @@ func TestGetTxResult_CorruptData(t *testing.T) {
 	}
 }
 
-func TestGetAssetsByOwnerPaginated_CorruptData(t *testing.T) {
+func TestGetAssetsByOwnerPaginated_PrefixKey(t *testing.T) {
 	db := testutil.NewMemDB()
-	db.Set([]byte("idx:owner:asset:alice"), []byte("!!!"))
+	for i := 0; i < 5; i++ {
+		db.Set([]byte(fmt.Sprintf("idx:owner:asset:alice:a%d", i)), []byte("1"))
+	}
 	emitter := events.NewEmitter()
 	idx := indexer.New(db, emitter)
 
-	_, err := idx.GetAssetsByOwnerPaginated("alice", 0, 10)
-	if err == nil {
-		t.Fatal("expected error from getListPaginated with corrupt data, got nil")
+	page, err := idx.GetAssetsByOwnerPaginated("alice", 0, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.IDs) != 3 {
+		t.Fatalf("expected 3 assets, got %d", len(page.IDs))
 	}
 }
 
-func TestGetSessionsByPlayer_CorruptData(t *testing.T) {
+func TestGetSessionsByPlayer_PrefixKey(t *testing.T) {
 	db := testutil.NewMemDB()
-	db.Set([]byte("idx:player:session:bob"), []byte("corrupt"))
+	db.Set([]byte("idx:player:session:bob:s1"), []byte("1"))
+	db.Set([]byte("idx:player:session:bob:s2"), []byte("1"))
 	emitter := events.NewEmitter()
 	idx := indexer.New(db, emitter)
 
-	_, err := idx.GetSessionsByPlayer("bob")
-	if err == nil {
-		t.Fatal("expected error for corrupt session data, got nil")
+	sessions, err := idx.GetSessionsByPlayer("bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("expected 2 sessions, got %d", len(sessions))
 	}
 }
 
-func TestGetActiveListings_CorruptData(t *testing.T) {
+func TestGetActiveListings_PrefixKey(t *testing.T) {
 	db := testutil.NewMemDB()
-	db.Set([]byte("idx:market:active"), []byte("{[}"))
+	db.Set([]byte("idx:market:active:listing1"), []byte("1"))
+	db.Set([]byte("idx:market:active:listing2"), []byte("1"))
 	emitter := events.NewEmitter()
 	idx := indexer.New(db, emitter)
 
-	_, err := idx.GetActiveListings()
-	if err == nil {
-		t.Fatal("expected error for corrupt active listings data, got nil")
+	listings, err := idx.GetActiveListings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listings) != 2 {
+		t.Fatalf("expected 2 listings, got %d", len(listings))
 	}
 }
 

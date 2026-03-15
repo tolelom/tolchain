@@ -139,6 +139,7 @@ func TestRandomReveal_Success(t *testing.T) {
 	ctx := newCtx(t, state, pubHex)
 	ctx.Tx.Type = core.TxRandomReveal
 	ctx.Block.Header.PrevHash = prevHash
+	ctx.Block.Header.Height = 5 // must be > BlockHeight + minRevealDelay (0 + 2)
 
 	payload, _ := json.Marshal(core.RandomRevealPayload{CommitID: "c1", Secret: secret})
 
@@ -310,6 +311,7 @@ func TestRandomReveal_NilEmitter(t *testing.T) {
 	ctx := newCtx(t, state, pubHex)
 	ctx.Emitter = nil
 	ctx.Tx.Type = core.TxRandomReveal
+	ctx.Block.Header.Height = 5 // must be > BlockHeight + minRevealDelay (0 + 2)
 
 	payload, _ := json.Marshal(core.RandomRevealPayload{CommitID: "c_ne_r", Secret: secret})
 
