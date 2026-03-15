@@ -170,7 +170,7 @@ func TestSaveKey_LoadKey_Roundtrip(t *testing.T) {
 	}
 }
 
-func TestLoadKey_WrongPassword(t *testing.T) {
+func TestLoadKey_WrongPassword_Wallet(t *testing.T) {
 	priv, _, err := crypto.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("GenerateKeyPair: %v", err)

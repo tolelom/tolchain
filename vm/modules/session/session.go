@@ -213,12 +213,13 @@ func handleSessionCancel(ctx *vm.Context, payload json.RawMessage) error {
 	if sess.Status != "open" {
 		return fmt.Errorf("session %q is not open (status=%s)", p.SessionID, sess.Status)
 	}
-	// The session creator can always cancel their own session.
-	// If operators are configured, non-creator senders must be operators.
 	if ctx.Tx.From != sess.Creator {
-		if err := vm.RequireOperator(ctx); err != nil {
-			return fmt.Errorf("only the session creator or an authorised operator can cancel sessions: %w", core.ErrUnauthorized)
-		}
+		return fmt.Errorf("only the session creator can cancel it: %w", core.ErrUnauthorized)
+	}
+
+	// Operator restriction.
+	if err := vm.RequireOperator(ctx); err != nil {
+		return err
 	}
 
 	// Refund stakes to all players.

@@ -51,7 +51,7 @@ func setupPoA(t *testing.T) (*PoA, *core.Blockchain, *wallet.Wallet) {
 	}
 
 	emitter := events.NewEmitter()
-	mempool := core.NewMempool()
+	mempool := core.NewMempool(10000, 3600, 300)
 	exec := vm.NewExecutor(state, emitter)
 	poa := New(cfg, bc, state, mempool, exec, emitter, w.PrivKey())
 
@@ -86,7 +86,7 @@ func TestIsProposer_EmptyValidators(t *testing.T) {
 	}
 
 	emitter := events.NewEmitter()
-	mempool := core.NewMempool()
+	mempool := core.NewMempool(10000, 3600, 300)
 	exec := vm.NewExecutor(state, emitter)
 	poa := New(cfg, bc, state, mempool, exec, emitter, w.PrivKey())
 
@@ -121,7 +121,7 @@ func TestIsProposer_MultipleValidatorsRoundRobin(t *testing.T) {
 	_ = bc.AddBlock(genesis)
 
 	emitter := events.NewEmitter()
-	mempool := core.NewMempool()
+	mempool := core.NewMempool(10000, 3600, 300)
 	exec := vm.NewExecutor(state, emitter)
 
 	// Genesis is height 0. Next height = 1. idx = 1 % 3 = 1 -> w2.
@@ -167,7 +167,7 @@ func TestProduceBlock_NotProposer(t *testing.T) {
 	_ = bc.AddBlock(genesis)
 
 	emitter := events.NewEmitter()
-	mempool := core.NewMempool()
+	mempool := core.NewMempool(10000, 3600, 300)
 	exec := vm.NewExecutor(state, emitter)
 
 	// w1 is not the proposer for height 1
@@ -246,7 +246,7 @@ func TestValidateBlock_WrongProposer(t *testing.T) {
 	_ = bc.AddBlock(genesis)
 
 	emitter := events.NewEmitter()
-	mempool := core.NewMempool()
+	mempool := core.NewMempool(10000, 3600, 300)
 	exec := vm.NewExecutor(state, emitter)
 	poa := New(cfg, bc, state, mempool, exec, emitter, w1.PrivKey())
 
@@ -304,7 +304,7 @@ func TestValidateBlock_NoValidators(t *testing.T) {
 	}
 
 	emitter := events.NewEmitter()
-	mempool := core.NewMempool()
+	mempool := core.NewMempool(10000, 3600, 300)
 	exec := vm.NewExecutor(state, emitter)
 	poa := New(cfg, bc, state, mempool, exec, emitter, w.PrivKey())
 

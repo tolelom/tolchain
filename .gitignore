@@ -19,3 +19,4 @@ password.txt
 vendor/
 *.test
 *.out
+node.exe
