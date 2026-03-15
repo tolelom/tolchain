@@ -124,6 +124,11 @@ func handleSessionResult(ctx *vm.Context, payload json.RawMessage) error {
 		return fmt.Errorf("decode session_result payload: %w", err)
 	}
 
+	// Operator restriction: only authorised operators can submit results.
+	if err := vm.RequireOperator(ctx); err != nil {
+		return err
+	}
+
 	sess, err := ctx.State.GetSession(p.SessionID)
 	if err != nil {
 		return fmt.Errorf("session %q not found: %w", p.SessionID, err)

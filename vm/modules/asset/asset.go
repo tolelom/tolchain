@@ -26,6 +26,11 @@ func handleMintAsset(ctx *vm.Context, payload json.RawMessage) error {
 		return errors.New("template_id required")
 	}
 
+	// Operator restriction: only authorised operators can mint assets.
+	if err := vm.RequireOperator(ctx); err != nil {
+		return err
+	}
+
 	tmpl, err := ctx.State.GetTemplate(p.TemplateID)
 	if err != nil {
 		return fmt.Errorf("template %q not found: %w", p.TemplateID, err)
