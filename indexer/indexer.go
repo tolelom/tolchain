@@ -182,12 +182,23 @@ func (idx *Indexer) onAssetBurned(ev events.Event) {
 
 func (idx *Indexer) onSessionOpen(ev events.Event) {
 	sessionID, _ := ev.Data["session_id"].(string)
-	players, _ := ev.Data["players"].([]any)
 	if sessionID == "" {
 		return
 	}
-	for _, p := range players {
-		player, _ := p.(string)
+	// ev.Data["players"] may be []string (from direct Go calls) or []any
+	// (from JSON round-tripping). Handle both with a type switch.
+	var players []string
+	switch v := ev.Data["players"].(type) {
+	case []string:
+		players = v
+	case []any:
+		for _, p := range v {
+			if s, ok := p.(string); ok {
+				players = append(players, s)
+			}
+		}
+	}
+	for _, player := range players {
 		if player != "" {
 			if err := idx.addToList(prefixPlayerSession+player, sessionID); err != nil {
 				slog.Error("session index write failed", "component", "indexer", "player", player, "session_id", sessionID, "error", err)
