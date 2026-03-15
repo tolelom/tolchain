@@ -514,7 +514,7 @@ func TestValidateSchema_UnknownTypeHint(t *testing.T) {
 	schema := map[string]any{"custom_field": "unknown_type"}
 	props := map[string]any{"custom_field": "any_value"}
 
-	if err := validateSchema(schema, props); err != nil {
+	if err := ValidateSchema(schema, props); err != nil {
 		t.Fatalf("expected success for unknown type hint, got %v", err)
 	}
 }
@@ -524,7 +524,7 @@ func TestValidateSchema_IntWithJsonNumber(t *testing.T) {
 	schema := map[string]any{"level": "int"}
 	props := map[string]any{"level": json.Number("42")}
 
-	if err := validateSchema(schema, props); err != nil {
+	if err := ValidateSchema(schema, props); err != nil {
 		t.Fatalf("expected success for json.Number int, got %v", err)
 	}
 }
@@ -534,7 +534,7 @@ func TestValidateSchema_IntWithInvalidJsonNumber(t *testing.T) {
 	schema := map[string]any{"level": "int"}
 	props := map[string]any{"level": json.Number("3.14")}
 
-	if err := validateSchema(schema, props); err == nil {
+	if err := ValidateSchema(schema, props); err == nil {
 		t.Fatal("expected error for non-integer json.Number")
 	}
 }
@@ -544,7 +544,7 @@ func TestValidateSchema_IntWithWrongType(t *testing.T) {
 	schema := map[string]any{"damage": "int"}
 	props := map[string]any{"damage": "not_a_number"}
 
-	if err := validateSchema(schema, props); err == nil {
+	if err := ValidateSchema(schema, props); err == nil {
 		t.Fatal("expected error for string where int expected")
 	}
 }
@@ -554,7 +554,7 @@ func TestValidateSchema_NonStringTypeHint(t *testing.T) {
 	schema := map[string]any{"weird": 42}
 	props := map[string]any{"weird": "anything"}
 
-	if err := validateSchema(schema, props); err != nil {
+	if err := ValidateSchema(schema, props); err != nil {
 		t.Fatalf("expected success for non-string type hint, got %v", err)
 	}
 }
@@ -667,7 +667,7 @@ func TestValidateSchema_MissingOptionalProperty(t *testing.T) {
 	schema := map[string]any{"name": "string", "rarity": "int"}
 	props := map[string]any{"name": "Excalibur"} // rarity is missing but optional
 
-	if err := validateSchema(schema, props); err != nil {
+	if err := ValidateSchema(schema, props); err != nil {
 		t.Fatalf("expected success for missing optional property, got %v", err)
 	}
 }

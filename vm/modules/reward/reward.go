@@ -9,16 +9,16 @@ import (
 	"github.com/tolelom/tolchain/crypto"
 	"github.com/tolelom/tolchain/events"
 	"github.com/tolelom/tolchain/vm"
+	"github.com/tolelom/tolchain/vm/modules/asset"
 )
 
 func init() {
 	vm.Register(core.TxGrantReward, handleGrantReward)
 }
 
-// KNOWN LIMITATION (MEDIUM): The reward payload schema is not validated beyond
-// basic JSON structure. There is no max asset count, no property-key whitelist,
-// and no per-reward token-amount cap. The operator signature requirement mitigates
-// abuse, but stricter schema validation should be added for defense-in-depth.
+// NOTE: Asset properties are validated against the template schema via
+// asset.ValidateSchema. Max asset count is capped at 50. The operator
+// signature requirement provides additional access control.
 func handleGrantReward(ctx *vm.Context, payload json.RawMessage) error {
 	if err := vm.RequireOperator(ctx); err != nil {
 		return err
@@ -73,6 +73,9 @@ func handleGrantReward(ctx *vm.Context, payload json.RawMessage) error {
 		tmpl, err := ctx.State.GetTemplate(mintP.TemplateID)
 		if err != nil {
 			return fmt.Errorf("asset[%d] template %q not found: %w", i, mintP.TemplateID, err)
+		}
+		if err := asset.ValidateSchema(tmpl.Schema, mintP.Properties); err != nil {
+			return fmt.Errorf("reward asset %s: schema validation failed: %w", mintP.TemplateID, err)
 		}
 		assetID := crypto.Hash([]byte(fmt.Sprintf("%s:reward:%d", ctx.Tx.ID, i)))
 		asset := &core.Asset{
