@@ -85,6 +85,8 @@ func (b *SSEBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// NOTE: The Load+Add is not atomic; 1-2 extra clients may connect
+	// beyond maxSSEClients under high concurrency. This is acceptable.
 	if b.clientCount.Load() >= maxSSEClients {
 		http.Error(w, "too many SSE clients", http.StatusServiceUnavailable)
 		return

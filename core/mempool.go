@@ -9,14 +9,6 @@ import (
 	"github.com/tolelom/tolchain/metrics"
 )
 
-const (
-	maxMempoolSize = 10_000
-	// maxTxAge is the maximum age of a transaction in the mempool (1 hour in nanoseconds).
-	maxTxAge       = int64(time.Hour)
-	// maxTxFuture is the maximum time a transaction timestamp can be in the future (5 minutes in nanoseconds).
-	maxTxFuture    = int64(5 * time.Minute)
-)
-
 
 // Mempool is a thread-safe pending-transaction pool.
 type Mempool struct {
@@ -47,6 +39,9 @@ func NewMempool(maxSize int, maxTxAgeSec int, maxFutureSec int) *Mempool {
 // full, the tx is already present, the signature is invalid, or the timestamp
 // is out of the acceptable window (±1 h / +5 min).
 func (m *Mempool) Add(tx *Transaction) error {
+	// Signature verification runs outside the lock for performance.
+	// Concurrent duplicate submissions may verify twice, but the
+	// dedup check under the lock prevents double-insertion.
 	if err := tx.Verify(); err != nil {
 		metrics.MempoolRejected.WithLabelValues("invalid_sig").Inc()
 		return fmt.Errorf("invalid tx signature: %w", err)

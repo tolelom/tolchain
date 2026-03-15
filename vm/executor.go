@@ -135,6 +135,9 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction) error {
 	if acc.Balance < tx.Fee {
 		return fmt.Errorf("insufficient balance for fee: have %d need %d: %w", acc.Balance, tx.Fee, core.ErrInsufficientBalance)
 	}
+	// The nonce overflow check fires when acc.Nonce == MaxUint64,
+	// even though the nonce equality check already passed.
+	// This means the account has exhausted all nonces.
 	if acc.Nonce == math.MaxUint64 {
 		return fmt.Errorf("nonce overflow for account %s: %w", tx.From, core.ErrNonceOverflow)
 	}
