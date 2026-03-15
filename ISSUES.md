@@ -13,63 +13,60 @@
 
 - **이벤트 버퍼링 — 커밋 후 emit**: `EventEmitter` 인터페이스와 `Buffer` 구조체를 도입하여 블록 실행 중에는 이벤트를 버퍼링하고, 커밋 성공 후에만 실제 emitter로 flush한다. 롤백 시에는 discard된다. (`events/buffer.go`, `vm/executor.go`, `consensus/poa.go`, `network/sync.go`)
 - **Indexer MarketBuy 미갱신**: `EventMarketBuy` 구독을 추가하여 seller에서 제거, buyer에 추가하는 `onMarketBuy` 핸들러를 등록했다. (`indexer/indexer.go`)
-- **Market Listing 취소**: `TxCancelListing` 타입, `CancelListingPayload`, `handleCancelListing` 핸들러, `EventMarketCancel` 이벤트를 추가했다. seller 검증, listing 비활성화, asset의 `ActiveListingID` 초기화를 수행한다. (`core/transaction.go`, `vm/modules/market/market.go`, `events/emitter.go`)
-- **Session 취소**: `TxSessionCancel` 타입, `SessionCancelPayload`, `handleSessionCancel` 핸들러, `EventSessionCancel` 이벤트를 추가했다. creator 검증 후 모든 플레이어에게 stakes를 환불하고 status를 "cancelled"로 변경한다. (`core/transaction.go`, `vm/modules/session/session.go`, `events/emitter.go`)
-- **Session 플레이어 동의**: `SessionOpenPayload`에 `Signatures map[string]string` 필드를 추가했다. stakes > 0일 때 tx.From을 제외한 각 플레이어가 `"session:<sessionID>"` 메시지에 서명했는지 검증한다. (`core/transaction.go`, `vm/modules/session/session.go`)
+- **Market Listing 취소**: `TxCancelListing` 타입, `CancelListingPayload`, `handleCancelListing` 핸들러, `EventMarketCancel` 이벤트를 추가했다.
+- **Session 취소**: `TxSessionCancel` 타입, `handleSessionCancel` 핸들러 추가. creator 또는 operator가 취소 가능, stakes 환불.
+- **Session 플레이어 동의**: `SessionOpenPayload`에 `Signatures map[string]string` 필드를 추가. stakes > 0일 때 각 플레이어의 서명 검증.
 
 ### P2 — 보통
 
-- **P2P ChainID 검증**: `Node`에 `chainID` 필드를 추가하고 `handleTx`에서 `tx.ChainID != n.chainID`이면 거부한다. (`network/node.go`, `cmd/node/main.go`)
-- **Sync 후 Mempool 정리**: `Syncer`에 `mempool` 필드를 추가하고, `handleBlocks`에서 블록 커밋 후 해당 tx들을 mempool에서 제거한다. (`network/sync.go`)
-- **Peer Idle Disconnect (Ping/Pong)**: Read deadline을 30초에서 5분으로 증가시키고, `MsgPing`/`MsgPong` 메시지 타입과 ping 핸들러를 추가했다. (`network/peer.go`, `network/node.go`)
-- **DefaultConfig Validator 자동 등록**: config 파일이 없을 때 validators가 비어있으면 로드된 키를 자동 등록한다 (dev mode). (`cmd/node/main.go`)
-- **AddBlock Genesis 검증**: `tip == nil`일 때 `block.Header.Height != 0`이면 거부한다. (`core/blockchain.go`)
-- **Mempool Nonce 추적**: sender별 pending nonce set을 추가하여 같은 sender의 중복 nonce를 거부한다. `Remove()` 시 nonce도 정리된다. (`core/mempool.go`)
+- **P2P ChainID 검증**: `handleTx`에서 ChainID 불일치 시 거부.
+- **Sync 후 Mempool 정리**: 블록 커밋 후 해당 tx들을 mempool에서 제거.
+- **Peer Idle Disconnect**: 5분 read deadline + MsgPing/MsgPong.
+- **DefaultConfig Validator 자동 등록**: dev mode 키 자동 등록.
+- **AddBlock Genesis 검증**: tip nil 시 height 0 강제.
+- **Mempool Nonce 추적**: sender별 중복 nonce 거부.
 
 ### P3 — 개선
 
-- **Asset Schema 검증**: 민팅 시 Properties가 Template.Schema와 일치하는지 검증한다. 지원 타입은 "string", "int", "bool"이며, 스키마에 없는 extra property는 거부된다. (`vm/modules/asset/asset.go`)
-- **게임 서버 권한 관리**: `Config`에 `Operators []string` 필드를 추가하고, `Executor`에 operators map을 전달하여 `Context`에 포함시킨다. template 등록, session open/cancel에서 operator 검증을 수행한다 (비어있으면 제한 없음). (`config/config.go`, `vm/executor.go`, `vm/modules/asset/template.go`, `vm/modules/session/session.go`, `cmd/node/main.go`)
+- **Asset Schema 검증**: 민팅 시 Properties와 Template.Schema 일치 검증. Reward 민팅에도 적용.
+- **게임 서버 권한 관리**: Operators 설정, RequireOperator 전수 적용 (session_open/result/cancel, mint_asset, register_template, grant_reward, random_commit/reveal).
+
+### 코드 리뷰 수정 (4차까지 완료)
+
+- **토큰 supply cap**: `system:total_supply` 추적, `MaxTotalSupply` config, genesis alloc overflow 검증.
+- **Executor mutex**: `sync.Mutex`로 동시성 보호, `executeTxLocked` 내부 메서드 분리.
+- **MsgBlock 핸들러**: 실시간 블록 전파 (tip+1 블록만 수락, 검증→실행→커밋).
+- **sync return-on-failure**: ExecuteBlock/AddBlock 실패 시 배치 중단.
+- **세션 중복 플레이어 검증**: handleSessionOpen에서 중복 pubkey 거부.
+- **commit-reveal 최소 간격**: 2블록 간격 강제.
+- **RPC auth subtle.ConstantTimeCompare**: 타이밍 공격 방지.
+- **피어 ID re-key**: MsgHello 후 선언된 node_id로 재등록.
+- **P2P per-peer rate limit**: 100 msg/s 초과 시 연결 해제.
+- **SSE 동시 접속 제한**: 최대 100 클라이언트.
+- **CORS 조건부 설정**: auth 토큰 설정 시 wildcard 제거.
+- **session_cancel 권한**: 생성자 항상 취소 가능 + 비생성자는 오퍼레이터만.
+- **Mempool compaction**: cap > 2*len+64 시 재할당.
+- **Indexer O(1)**: JSON 배열 → prefix-key 방식, iterator 기반 조회.
+- **블록 프루닝**: `PruneKeepBlocks` config, genesis 보존, 증분 프루닝.
+- **LevelDB 손상 복구**: `RecoverFile` 자동 시도.
+- **로그 레벨 config**: `LogLevel` 필드 + slog 레벨 설정.
+- **MaxBlockTxs 상한**: 10000 제한.
+- **genesis alloc vs supply cap**: 초과 시 거부.
+- **타임스탬프 양수 검증**: 블록 타임스탬프 > 0 강제.
+- **세션/보상 수량 제한**: maxSessionPlayers=10, maxRewardAssets=50.
+- **오퍼레이터 체크 일관화**: 모든 모듈 `len(ctx.Operators) > 0` 또는 `RequireOperator`.
+- **ComputeRoot iterator 에러 체크**: 로깅 추가.
+- **Genesis TxRoot**: `core.ComputeTxRoot(nil)` 사용.
+- **Mempool 메트릭 정확도**: 실제 삭제 수만 카운트.
+- **문서화**: PoA 신뢰 모델, ComputeRoot O(N), /metrics 인증, SSE 리버스 프록시, RPC 상태 비격리.
 
 ---
 
 ## Open Issues
 
-### 1. Migrate logging to `log/slog` (structured logging)
+현재 열린 이슈 없음. 로깅은 slog로 전환 완료, 테스트 커버리지는 패키지별로 추가 완료.
 
-**Priority:** Medium
-**Scope:** All packages
+### 보류 (2.0 범위)
 
-현재 모든 로깅이 `log.Printf`를 사용 중. 프로덕션에서는 레벨 구분(debug/info/warn/error), JSON 출력, 로그 수집(ELK/Loki) 연동이 필요.
-
-#### 작업 내용
-- `log.Printf` → `slog.Info`/`slog.Warn`/`slog.Error` 전환
-- `log.Fatalf` → `slog.Error` + `os.Exit(1)` 또는 유지
-- `cmd/node/main.go`에서 로그 레벨/포맷 설정 (JSON vs text)
-- config에 `log_level` 필드 추가
-
-#### 영향 파일
-consensus/poa.go, network/node.go, network/sync.go, indexer/indexer.go, rpc/server.go, cmd/node/main.go 등 전체
-
----
-
-### 2. Add test coverage for core packages
-
-**Priority:** Medium
-**Scope:** consensus, storage, config, wallet
-
-현재 테스트가 `tests/` 패키지에만 존재. 핵심 패키지별 유닛 테스트가 전무.
-
-#### 필요한 테스트
-- **consensus**: `IsProposer()` 라운드로빈, `ProduceBlock()` 정상/실패/실패TX건너뛰기, `ValidateBlock()` 정상/서명불일치/높이불일치
-- **storage**: `StateDB.Snapshot()`/`RevertToSnapshot()`/`Commit()` 라운드트립, `ComputeRoot()` 결정론적 해시, `LevelBlockStore.CommitBlock()` 원자성
-- **config**: `Load()` + `Validate()` — 유효/무효 케이스, `DefaultConfig()` 동작, `Save()` 권한 확인
-- **wallet**: `SaveKey`/`LoadKey` 라운드트립, 잘못된 비밀번호 거부, 빈 비밀번호 동작
-- **mempool**: nonce 중복 거부, Remove 시 nonce 정리
-- **events**: Buffer flush/discard 동작
-- **market**: cancel_listing 정상/권한오류
-- **session**: session_cancel 환불, 플레이어 동의 서명 검증
-
-#### 참고
-- `internal/testutil`의 `MemDB`/`MemBlockStore` 활용
-- 각 패키지 내부에 `_test.go` 생성 (package-level 테스트)
+1. **오퍼레이터 multi-sig**: 현재 단일 키 의존. 외부 오퍼레이터나 DAO 거버넌스 필요 시 구현.
+2. **증분 Merkle 구조**: ComputeRoot O(N) → Patricia Trie. 상태가 수십만 건 이상일 때 필요.
