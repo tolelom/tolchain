@@ -86,6 +86,9 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 	tip := p.bc.Tip()
 	var prevHash string
 	var nextHeight int64
+	// Genesis block (height 0) is created by CreateGenesisBlock in main.go,
+	// not by ProduceBlock. If tip is nil here, it means genesis is missing,
+	// and the produced block at height 1 will be rejected by AddBlock.
 	if tip == nil {
 		prevHash = config.GenesisHash
 		nextHeight = 1
