@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -20,6 +21,29 @@ func validConfig(t *testing.T) *Config {
 	cfg := DefaultConfig()
 	cfg.Validators = []string{pub.Hex()}
 	return cfg
+}
+
+// validatorHex generates a deterministic 32-byte ed25519 public key hex for testing.
+func validatorHex(t *testing.T) string {
+	t.Helper()
+	_, pub, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pub.Hex()
+}
+
+func writeConfigFile(t *testing.T, cfg *Config) string {
+	t.Helper()
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // ---- DefaultConfig ----
@@ -47,6 +71,121 @@ func TestDefaultConfig_ValidateFails_NoValidators(t *testing.T) {
 	cfg := DefaultConfig()
 	if err := cfg.Validate(); err == nil {
 		t.Error("expected Validate to fail for default config (no validators)")
+	}
+}
+
+func TestDefaultConfig_Values(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.RPCPort != DefaultRPCPort {
+		t.Errorf("RPCPort: got %d want %d", cfg.RPCPort, DefaultRPCPort)
+	}
+	if cfg.P2PPort != DefaultP2PPort {
+		t.Errorf("P2PPort: got %d want %d", cfg.P2PPort, DefaultP2PPort)
+	}
+	if cfg.MaxBlockTxs != DefaultMaxBlockTxs {
+		t.Errorf("MaxBlockTxs: got %d want %d", cfg.MaxBlockTxs, DefaultMaxBlockTxs)
+	}
+	if cfg.NodeID != "node0" {
+		t.Errorf("NodeID: got %q want %q", cfg.NodeID, "node0")
+	}
+}
+
+// ---- Load ----
+
+func TestLoad_ValidConfig(t *testing.T) {
+	v := validatorHex(t)
+	cfg := &Config{
+		NodeID:      "node0",
+		DataDir:     "./data",
+		RPCPort:     8545,
+		P2PPort:     30303,
+		MaxBlockTxs: 100,
+		Validators:  []string{v},
+		Genesis: GenesisConfig{
+			ChainID: "test-chain",
+			Alloc:   map[string]uint64{v: 1000},
+		},
+	}
+
+	path := writeConfigFile(t, cfg)
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.NodeID != "node0" {
+		t.Errorf("NodeID: got %q want %q", loaded.NodeID, "node0")
+	}
+	if loaded.Genesis.ChainID != "test-chain" {
+		t.Errorf("ChainID: got %q want %q", loaded.Genesis.ChainID, "test-chain")
+	}
+	if len(loaded.Validators) != 1 || loaded.Validators[0] != v {
+		t.Errorf("Validators mismatch")
+	}
+}
+
+func TestLoad_DefaultsApplied(t *testing.T) {
+	v := validatorHex(t)
+	// Write a minimal config that omits RPCPort, P2PPort, MaxBlockTxs.
+	raw := map[string]any{
+		"node_id":    "minimal",
+		"data_dir":   "./data",
+		"validators": []string{v},
+		"genesis":    map[string]any{"chain_id": "test"},
+	}
+	data, _ := json.Marshal(raw)
+	path := filepath.Join(t.TempDir(), "min.json")
+	_ = os.WriteFile(path, data, 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Defaults should be applied via DefaultConfig() base.
+	if cfg.RPCPort != DefaultRPCPort {
+		t.Errorf("RPCPort should default to %d, got %d", DefaultRPCPort, cfg.RPCPort)
+	}
+	if cfg.P2PPort != DefaultP2PPort {
+		t.Errorf("P2PPort should default to %d, got %d", DefaultP2PPort, cfg.P2PPort)
+	}
+	if cfg.MaxBlockTxs != DefaultMaxBlockTxs {
+		t.Errorf("MaxBlockTxs should default to %d, got %d", DefaultMaxBlockTxs, cfg.MaxBlockTxs)
+	}
+}
+
+func TestLoad_NonexistentFile(t *testing.T) {
+	_, err := Load("/nonexistent/path/config.json")
+	if err == nil {
+		t.Error("expected error for nonexistent file")
+	}
+}
+
+func TestLoad_InvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.json")
+	if err := os.WriteFile(path, []byte("{not json!!!"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestLoad_ValidatesAfterParsing(t *testing.T) {
+	// Write a JSON file that parses but has no validators
+	dir := t.TempDir()
+	path := filepath.Join(dir, "invalid.json")
+	cfg := DefaultConfig() // no validators
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	_, err = Load(path)
+	if err == nil {
+		t.Error("expected Load to fail validation for config with no validators")
 	}
 }
 
@@ -145,24 +284,24 @@ func TestValidate_InvalidValidatorHex(t *testing.T) {
 func TestValidate_ValidatorWrongLength(t *testing.T) {
 	cfg := validConfig(t)
 	// 16 bytes (32 hex chars) instead of 32 bytes (64 hex chars)
-	cfg.Validators = []string{"aabbccddaabbccddaabbccddaabbccdd"}
+	short := hex.EncodeToString(make([]byte, 16))
+	cfg.Validators = []string{short}
 	if err := cfg.Validate(); err == nil {
 		t.Error("expected error for wrong length validator")
 	}
 }
 
 func TestValidate_DuplicateValidator(t *testing.T) {
-	_, pub, err := crypto.GenerateKeyPair()
-	if err != nil {
-		t.Fatalf("GenerateKeyPair: %v", err)
-	}
-	cfg := validConfig(t)
-	h := pub.Hex()
-	cfg.Validators = []string{h, h}
-	if err := cfg.Validate(); err == nil {
-		t.Error("expected error for duplicate validator")
+	v := validatorHex(t)
+	cfg := DefaultConfig()
+	cfg.Validators = []string{v, v}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for duplicate validator pubkey")
 	}
 }
+
+// --- TLS ---
 
 func TestValidate_PartialTLS(t *testing.T) {
 	cfg := validConfig(t)
@@ -220,25 +359,6 @@ func TestSaveAndLoad_Roundtrip(t *testing.T) {
 	}
 	if len(loaded.Validators) != len(cfg.Validators) {
 		t.Errorf("Validators count = %d, want %d", len(loaded.Validators), len(cfg.Validators))
-	}
-}
-
-func TestLoad_NonexistentFile(t *testing.T) {
-	_, err := Load("/nonexistent/path/config.json")
-	if err == nil {
-		t.Error("expected error for nonexistent file")
-	}
-}
-
-func TestLoad_InvalidJSON(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "bad.json")
-	if err := os.WriteFile(path, []byte("{not json!!!"), 0600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	_, err := Load(path)
-	if err == nil {
-		t.Error("expected error for invalid JSON")
 	}
 }
 
@@ -343,25 +463,5 @@ func TestIsGenesisHash(t *testing.T) {
 	}
 	if IsGenesisHash("") {
 		t.Error("IsGenesisHash(\"\") = true, want false")
-	}
-}
-
-// ---- Load validates ----
-
-func TestLoad_ValidatesAfterParsing(t *testing.T) {
-	// Write a JSON file that parses but has no validators
-	dir := t.TempDir()
-	path := filepath.Join(dir, "invalid.json")
-	cfg := DefaultConfig() // no validators
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		t.Fatalf("MarshalIndent: %v", err)
-	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	_, err = Load(path)
-	if err == nil {
-		t.Error("expected Load to fail validation for config with no validators")
 	}
 }

@@ -29,6 +29,19 @@ func handleSessionOpen(ctx *vm.Context, payload json.RawMessage) error {
 	if len(p.Players) == 0 {
 		return errors.New("at least one player required")
 	}
+	const maxSessionPlayers = 10
+	if len(p.Players) > maxSessionPlayers {
+		return fmt.Errorf("too many players: max %d, got %d", maxSessionPlayers, len(p.Players))
+	}
+
+	// Reject duplicate players to prevent double-stake deduction.
+	seen := make(map[string]bool, len(p.Players))
+	for _, player := range p.Players {
+		if seen[player] {
+			return fmt.Errorf("duplicate player: %s", player)
+		}
+		seen[player] = true
+	}
 
 	// Operator restriction: only authorised operators can open sessions.
 	if err := vm.RequireOperator(ctx); err != nil {
@@ -200,13 +213,12 @@ func handleSessionCancel(ctx *vm.Context, payload json.RawMessage) error {
 	if sess.Status != "open" {
 		return fmt.Errorf("session %q is not open (status=%s)", p.SessionID, sess.Status)
 	}
+	// The session creator can always cancel their own session.
+	// If operators are configured, non-creator senders must be operators.
 	if ctx.Tx.From != sess.Creator {
-		return fmt.Errorf("only the session creator can cancel it: %w", core.ErrUnauthorized)
-	}
-
-	// Operator restriction.
-	if err := vm.RequireOperator(ctx); err != nil {
-		return err
+		if err := vm.RequireOperator(ctx); err != nil {
+			return fmt.Errorf("only the session creator or an authorised operator can cancel sessions: %w", core.ErrUnauthorized)
+		}
 	}
 
 	// Refund stakes to all players.

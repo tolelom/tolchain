@@ -20,6 +20,12 @@ func TestGenerateKeyPair(t *testing.T) {
 	if len(pub) != 32 {
 		t.Errorf("public key length = %d, want 32", len(pub))
 	}
+
+	// Public key should be derivable from private key.
+	derived := priv.Public()
+	if derived.Hex() != pub.Hex() {
+		t.Error("priv.Public() should equal generated pub")
+	}
 }
 
 func TestPubKeyHexRoundtrip(t *testing.T) {
@@ -101,6 +107,8 @@ func TestPrivateKey_Public(t *testing.T) {
 	}
 }
 
+// ---- Address ----
+
 func TestPublicKey_Address(t *testing.T) {
 	_, pub, err := GenerateKeyPair()
 	if err != nil {
@@ -113,6 +121,21 @@ func TestPublicKey_Address(t *testing.T) {
 	// Must be valid hex
 	if _, err := hex.DecodeString(addr); err != nil {
 		t.Errorf("address is not valid hex: %v", err)
+	}
+
+	// Same key should produce same address.
+	addr2 := pub.Address()
+	if addr != addr2 {
+		t.Error("address should be deterministic")
+	}
+}
+
+func TestTwoKeyPairs_DifferentAddresses(t *testing.T) {
+	_, pub1, _ := GenerateKeyPair()
+	_, pub2, _ := GenerateKeyPair()
+
+	if pub1.Address() == pub2.Address() {
+		t.Error("different keys should produce different addresses")
 	}
 }
 
@@ -130,14 +153,12 @@ func TestSignAndVerify(t *testing.T) {
 	}
 }
 
-func TestVerify_WrongData(t *testing.T) {
-	priv, pub, err := GenerateKeyPair()
-	if err != nil {
-		t.Fatalf("GenerateKeyPair: %v", err)
-	}
-	sig := Sign(priv, []byte("original"))
-	if err := Verify(pub, []byte("tampered"), sig); err == nil {
-		t.Error("expected Verify to fail with wrong data, got nil")
+func TestSignVerify_DifferentMessages(t *testing.T) {
+	priv, pub, _ := GenerateKeyPair()
+
+	sig := Sign(priv, []byte("message-a"))
+	if err := Verify(pub, []byte("message-b"), sig); err == nil {
+		t.Error("verify should fail when message differs")
 	}
 }
 
@@ -176,6 +197,13 @@ func TestHash_Deterministic(t *testing.T) {
 	if h1 != h2 {
 		t.Errorf("Hash not deterministic: %s != %s", h1, h2)
 	}
+	if h1 == "" {
+		t.Error("hash should not be empty")
+	}
+	// SHA-256 produces 64 hex characters.
+	if len(h1) != 64 {
+		t.Errorf("hash length: got %d want 64", len(h1))
+	}
 }
 
 func TestHash_DifferentInputs(t *testing.T) {
@@ -183,6 +211,26 @@ func TestHash_DifferentInputs(t *testing.T) {
 	h2 := Hash([]byte("input B"))
 	if h1 == h2 {
 		t.Error("Hash produced same output for different inputs")
+	}
+}
+
+func TestHash_EmptyInput(t *testing.T) {
+	h := Hash([]byte{})
+	if h == "" {
+		t.Error("hash of empty input should not be empty")
+	}
+	if len(h) != 64 {
+		t.Errorf("hash length: got %d want 64", len(h))
+	}
+}
+
+func TestHash_SingleBitDifference(t *testing.T) {
+	a := []byte{0x00}
+	b := []byte{0x01}
+	ha := Hash(a)
+	hb := Hash(b)
+	if ha == hb {
+		t.Error("single bit difference should produce different hashes")
 	}
 }
 

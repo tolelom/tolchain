@@ -87,6 +87,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	// ---- configure log level ----
+	{
+		var level slog.Level
+		switch cfg.LogLevel {
+		case "debug":
+			level = slog.LevelDebug
+		case "warn":
+			level = slog.LevelWarn
+		case "error":
+			level = slog.LevelError
+		default:
+			level = slog.LevelInfo
+		}
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
+	}
+
 	// ---- load validator key ----
 	privKey, err := wallet.LoadKey(*keyPath, password)
 	if err != nil {
@@ -148,6 +164,7 @@ func main() {
 	// ---- VM executor ----
 	exec := vm.NewExecutor(state, emitter)
 	exec.SetOperators(cfg.Operators)
+	exec.SetMaxTotalSupply(cfg.MaxTotalSupply)
 
 	// ---- consensus ----
 	poa := consensus.New(cfg, bc, state, mempool, exec, emitter, privKey)
@@ -173,10 +190,26 @@ func main() {
 	defer node.Stop()
 	slog.Info("P2P listening", "addr", p2pAddr)
 
+	// ---- block pruner ----
+	var pruner *storage.Pruner
+	if cfg.PruneKeepBlocks > 0 {
+		pruner = storage.NewPruner(db, cfg.PruneKeepBlocks)
+		slog.Info("block pruning enabled", "keep_blocks", cfg.PruneKeepBlocks)
+	}
+
 	// ---- broadcast committed blocks ----
 	emitter.Subscribe(events.EventBlockCommit, func(ev events.Event) {
-		if b, ok := ev.Data["block"].(*core.Block); ok && b != nil {
-			node.BroadcastBlock(b)
+		b, ok := ev.Data["block"].(*core.Block)
+		if !ok || b == nil {
+			return
+		}
+		node.BroadcastBlock(b)
+
+		// Prune old blocks after each commit.
+		if pruner != nil {
+			if err := pruner.Prune(b.Header.Height); err != nil {
+				slog.Error("block pruning failed", "error", err)
+			}
 		}
 	})
 

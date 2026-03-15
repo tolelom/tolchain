@@ -2,6 +2,7 @@ package reward
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/tolelom/tolchain/core"
@@ -14,6 +15,10 @@ func init() {
 	vm.Register(core.TxGrantReward, handleGrantReward)
 }
 
+// KNOWN LIMITATION (MEDIUM): The reward payload schema is not validated beyond
+// basic JSON structure. There is no max asset count, no property-key whitelist,
+// and no per-reward token-amount cap. The operator signature requirement mitigates
+// abuse, but stricter schema validation should be added for defense-in-depth.
 func handleGrantReward(ctx *vm.Context, payload json.RawMessage) error {
 	if err := vm.RequireOperator(ctx); err != nil {
 		return err
@@ -27,8 +32,28 @@ func handleGrantReward(ctx *vm.Context, payload json.RawMessage) error {
 		return err
 	}
 
+	const maxRewardAssets = 50
+	if len(p.Assets) > maxRewardAssets {
+		return fmt.Errorf("too many assets in reward: max %d, got %d", maxRewardAssets, len(p.Assets))
+	}
+
 	// Credit tokens.
 	if p.TokenAmount > 0 {
+		// Enforce total supply cap if configured.
+		if ctx.MaxTotalSupply > 0 {
+			supply, err := ctx.State.GetAccount("system:total_supply")
+			if err != nil {
+				return fmt.Errorf("get total supply: %w", err)
+			}
+			if supply.Balance > ctx.MaxTotalSupply-p.TokenAmount || supply.Balance+p.TokenAmount > ctx.MaxTotalSupply {
+				return errors.New("total supply cap exceeded")
+			}
+			supply.Balance += p.TokenAmount
+			if err := ctx.State.SetAccount(supply); err != nil {
+				return fmt.Errorf("update total supply: %w", err)
+			}
+		}
+
 		acc, err := ctx.State.GetAccount(p.Recipient)
 		if err != nil {
 			return fmt.Errorf("get recipient account: %w", err)

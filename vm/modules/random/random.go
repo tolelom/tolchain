@@ -80,6 +80,12 @@ func handleRandomReveal(ctx *vm.Context, payload json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("commitment %q not found: %w", p.CommitID, err)
 	}
+
+	const minRevealDelay = 2
+	if ctx.Block.Header.Height <= rc.BlockHeight+minRevealDelay {
+		return fmt.Errorf("reveal too early: must wait at least %d blocks after commit", minRevealDelay)
+	}
+
 	if rc.Revealed {
 		return errors.New("already revealed")
 	}

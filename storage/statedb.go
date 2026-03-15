@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 
@@ -338,6 +339,11 @@ func (s *StateDB) RevertToSnapshot(id int) error {
 // prefixes) with the current write buffer, then hashes the sorted key-value
 // pairs using length-prefix encoding.  It does NOT flush or modify state,
 // so it is safe to call before signing a block.
+//
+// KNOWN LIMITATION (MEDIUM): This is O(N) over all state entries. For very
+// large states (millions of accounts/assets), this will become a bottleneck.
+// A Merkle-trie or incremental hashing structure would reduce this to O(log N)
+// per block, but is deferred until performance profiling warrants it.
 func (s *StateDB) ComputeRoot() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -352,6 +358,9 @@ func (s *StateDB) ComputeRoot() string {
 			merged[k] = v
 		}
 		it.Release()
+		if err := it.Error(); err != nil {
+			slog.Error("iterator error in ComputeRoot", "prefix", string(prefix), "error", err)
+		}
 	}
 
 	// Step 2: apply in-memory write buffer (uncommitted changes this block).

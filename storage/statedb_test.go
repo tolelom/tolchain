@@ -12,6 +12,13 @@ func newTestState() *storage.StateDB {
 	return testutil.NewStateDB()
 }
 
+func newTestStateDB(t *testing.T) *storage.StateDB {
+	t.Helper()
+	return storage.NewStateDB(testutil.NewMemDB())
+}
+
+// --- Account ---
+
 func TestStateDB_Account_DefaultZero(t *testing.T) {
 	s := newTestState()
 	acc, err := s.GetAccount("nonexistent")
@@ -42,6 +49,25 @@ func TestStateDB_Account_SetAndGet(t *testing.T) {
 	}
 }
 
+func TestSetAccountOverwrite(t *testing.T) {
+	state := newTestStateDB(t)
+
+	addr := "overwrite-addr"
+	if err := state.SetAccount(&core.Account{Address: addr, Balance: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetAccount(&core.Account{Address: addr, Balance: 999}); err != nil {
+		t.Fatal(err)
+	}
+
+	acc, _ := state.GetAccount(addr)
+	if acc.Balance != 999 {
+		t.Errorf("expected 999, got %d", acc.Balance)
+	}
+}
+
+// --- Asset ---
+
 func TestStateDB_Asset_NotFound(t *testing.T) {
 	s := newTestState()
 	_, err := s.GetAsset("nonexistent")
@@ -69,6 +95,8 @@ func TestStateDB_Asset_SetGetDelete(t *testing.T) {
 		t.Fatal("expected error after delete")
 	}
 }
+
+// --- Snapshot and Rollback ---
 
 func TestStateDB_Snapshot_Revert(t *testing.T) {
 	s := newTestState()
@@ -105,6 +133,14 @@ func TestStateDB_Snapshot_InvalidID(t *testing.T) {
 	}
 }
 
+func TestRevertToSnapshot_NegativeID(t *testing.T) {
+	state := newTestStateDB(t)
+
+	if err := state.RevertToSnapshot(-1); err == nil {
+		t.Error("expected error for negative snapshot id")
+	}
+}
+
 func TestStateDB_Snapshot_NestedRevert(t *testing.T) {
 	s := newTestState()
 	s.SetAccount(&core.Account{Address: "a", Balance: 10})
@@ -129,6 +165,8 @@ func TestStateDB_Snapshot_NestedRevert(t *testing.T) {
 		t.Fatalf("expected 10 after outer revert, got %d", acc.Balance)
 	}
 }
+
+// --- ComputeRoot ---
 
 func TestStateDB_ComputeRoot_Deterministic(t *testing.T) {
 	s := newTestState()
@@ -155,6 +193,23 @@ func TestStateDB_ComputeRoot_ChangesOnMutation(t *testing.T) {
 	}
 }
 
+func TestComputeRoot_DifferentStatesDifferentRoots(t *testing.T) {
+	state1 := newTestStateDB(t)
+	state2 := newTestStateDB(t)
+
+	_ = state1.SetAccount(&core.Account{Address: "alice", Balance: 100})
+	_ = state2.SetAccount(&core.Account{Address: "alice", Balance: 200})
+
+	root1 := state1.ComputeRoot()
+	root2 := state2.ComputeRoot()
+
+	if root1 == root2 {
+		t.Error("different balances should produce different roots")
+	}
+}
+
+// --- Commit ---
+
 func TestStateDB_Commit_PersistsToDb(t *testing.T) {
 	db := testutil.NewMemDB()
 	s := storage.NewStateDB(db)
@@ -175,6 +230,41 @@ func TestStateDB_Commit_PersistsToDb(t *testing.T) {
 	}
 }
 
+func TestCommit_ClearsDirtyAndSnapshots(t *testing.T) {
+	state := newTestStateDB(t)
+
+	_ = state.SetAccount(&core.Account{Address: "x", Balance: 1})
+	snapID, _ := state.Snapshot()
+
+	if err := state.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	// After commit, old snapshot should be invalid.
+	if err := state.RevertToSnapshot(snapID); err == nil {
+		t.Error("snapshot should be invalidated after commit")
+	}
+}
+
+func TestCommit_DeletedKeysRemovedFromDB(t *testing.T) {
+	state := newTestStateDB(t)
+
+	// Set and commit an asset, then delete and commit again.
+	asset := &core.Asset{ID: "del-test", Owner: "alice", TemplateID: "tmpl1"}
+	_ = state.SetAsset(asset)
+	_ = state.Commit()
+
+	_ = state.DeleteAsset("del-test")
+	_ = state.Commit()
+
+	_, err := state.GetAsset("del-test")
+	if err == nil {
+		t.Error("deleted asset should not be retrievable after commit")
+	}
+}
+
+// --- Session ---
+
 func TestStateDB_Session_SetAndGet(t *testing.T) {
 	s := newTestState()
 	sess := &core.Session{ID: "s1", GameID: "g1", Status: "open", Players: []string{"a", "b"}}
@@ -189,6 +279,8 @@ func TestStateDB_Session_SetAndGet(t *testing.T) {
 	}
 }
 
+// --- Inventory ---
+
 func TestStateDB_Inventory_DefaultEmpty(t *testing.T) {
 	s := newTestState()
 	inv, err := s.GetInventory("nobody")
@@ -199,6 +291,47 @@ func TestStateDB_Inventory_DefaultEmpty(t *testing.T) {
 		t.Fatal("expected empty inventory")
 	}
 }
+
+func TestStateDB_Inventory_SetAndGet(t *testing.T) {
+	s := newTestState()
+	inv := &core.Inventory{Owner: "alice", Slots: map[string]string{"weapon": "sword1", "armor": "plate1"}}
+	if err := s.SetInventory(inv); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetInventory("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Slots["weapon"] != "sword1" || got.Slots["armor"] != "plate1" {
+		t.Fatal("inventory data mismatch")
+	}
+}
+
+func TestStateDB_Inventory_SetOverwrite(t *testing.T) {
+	s := newTestState()
+	inv1 := &core.Inventory{Owner: "alice", Slots: map[string]string{"weapon": "sword1"}}
+	if err := s.SetInventory(inv1); err != nil {
+		t.Fatal(err)
+	}
+
+	inv2 := &core.Inventory{Owner: "alice", Slots: map[string]string{"weapon": "sword2", "shield": "buckler"}}
+	if err := s.SetInventory(inv2); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetInventory("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Slots["weapon"] != "sword2" {
+		t.Fatalf("expected sword2, got %s", got.Slots["weapon"])
+	}
+	if got.Slots["shield"] != "buckler" {
+		t.Fatalf("expected buckler, got %s", got.Slots["shield"])
+	}
+}
+
+// --- Listing ---
 
 func TestStateDB_Listing_SetAndGet(t *testing.T) {
 	s := newTestState()
@@ -213,6 +346,8 @@ func TestStateDB_Listing_SetAndGet(t *testing.T) {
 		t.Fatal("listing data mismatch")
 	}
 }
+
+// --- Template ---
 
 func TestStateDB_Template_SetAndGet(t *testing.T) {
 	s := newTestState()
@@ -238,6 +373,8 @@ func TestStateDB_Template_NotFound(t *testing.T) {
 	}
 }
 
+// --- RandomCommitment ---
+
 func TestStateDB_RandomCommitment_SetAndGet(t *testing.T) {
 	s := newTestState()
 	rc := &core.RandomCommitment{ID: "rc1", Committer: "alice", CommitHash: "abc123"}
@@ -259,21 +396,6 @@ func TestStateDB_RandomCommitment_NotFound(t *testing.T) {
 	_, err := s.GetRandomCommitment("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent random commitment")
-	}
-}
-
-func TestStateDB_Inventory_SetAndGet(t *testing.T) {
-	s := newTestState()
-	inv := &core.Inventory{Owner: "alice", Slots: map[string]string{"weapon": "sword1", "armor": "plate1"}}
-	if err := s.SetInventory(inv); err != nil {
-		t.Fatal(err)
-	}
-	got, err := s.GetInventory("alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Slots["weapon"] != "sword1" || got.Slots["armor"] != "plate1" {
-		t.Fatal("inventory data mismatch")
 	}
 }
 
@@ -346,29 +468,5 @@ func TestStateDB_GetRandomCommitment_CorruptData(t *testing.T) {
 	_, err := s.GetRandomCommitment("rc1")
 	if err == nil {
 		t.Fatal("expected error for corrupt random commitment data")
-	}
-}
-
-func TestStateDB_Inventory_SetOverwrite(t *testing.T) {
-	s := newTestState()
-	inv1 := &core.Inventory{Owner: "alice", Slots: map[string]string{"weapon": "sword1"}}
-	if err := s.SetInventory(inv1); err != nil {
-		t.Fatal(err)
-	}
-
-	inv2 := &core.Inventory{Owner: "alice", Slots: map[string]string{"weapon": "sword2", "shield": "buckler"}}
-	if err := s.SetInventory(inv2); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := s.GetInventory("alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Slots["weapon"] != "sword2" {
-		t.Fatalf("expected sword2, got %s", got.Slots["weapon"])
-	}
-	if got.Slots["shield"] != "buckler" {
-		t.Fatalf("expected buckler, got %s", got.Slots["shield"])
 	}
 }

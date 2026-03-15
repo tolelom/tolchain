@@ -65,6 +65,12 @@ func (p *PoA) IsProposer() bool {
 // ProduceBlock builds, signs, executes and commits the next block.
 // Failed transactions are skipped (and removed from the mempool) so that a
 // single invalid tx cannot stall block production.
+//
+// Trust Model: PoA assumes validators are trusted entities. A malicious validator
+// can censor transactions by excluding them from blocks. This is an accepted
+// trade-off for the simplicity and performance of round-robin PoA consensus.
+// For production deployments with untrusted validators, consider adding a
+// transaction inclusion watchdog or switching to a BFT consensus protocol.
 func (p *PoA) ProduceBlock() (*core.Block, error) {
 	start := time.Now()
 	if !p.IsProposer() {
@@ -205,6 +211,11 @@ func (p *PoA) ValidateBlock(block *core.Block) error {
 	// Independently verify TxRoot matches the actual transaction list.
 	if txRoot := core.ComputeTxRoot(block.Transactions); block.Header.TxRoot != txRoot {
 		return fmt.Errorf("tx_root mismatch: got %s want %s", block.Header.TxRoot, txRoot)
+	}
+
+	// Block timestamp must be positive (non-zero, non-negative).
+	if block.Header.Timestamp <= 0 {
+		return fmt.Errorf("invalid block timestamp: %d", block.Header.Timestamp)
 	}
 
 	// (C) Timestamp validation: must not be too far in the future

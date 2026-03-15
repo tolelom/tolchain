@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -54,6 +55,8 @@ func NewServer(addr string, handler *Handler, authToken string, sseBroker *SSEBr
 	if statusFunc != nil {
 		mux.HandleFunc("/status", s.serveStatus)
 	}
+	// KNOWN LIMITATION (MEDIUM): The /metrics endpoint has no authentication.
+	// In production, restrict access via reverse proxy rules or network policies.
 	mux.Handle("/metrics", metrics.Handler())
 	s.srv = &http.Server{
 		Addr:              addr,
@@ -100,6 +103,20 @@ func (s *Server) Stop() error {
 }
 
 func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	// CORS headers for cross-origin requests.
+	if s.authToken == "" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+	}
+	// When auth is required, do not allow wildcard CORS.
+	// Clients must use a reverse proxy or same-origin requests.
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
 		return
@@ -114,7 +131,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.authToken != "" {
-		if r.Header.Get("Authorization") != "Bearer "+s.authToken {
+		got := r.Header.Get("Authorization")
+		expected := "Bearer " + s.authToken
+		if subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
 			metrics.RPCErrors.WithLabelValues(fmt.Sprint(CodeUnauthorized)).Inc()
 			w.WriteHeader(http.StatusUnauthorized)
 			writeJSON(w, errResponse(nil, CodeUnauthorized, "unauthorized"))
@@ -148,6 +167,17 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveStatus(w http.ResponseWriter, r *http.Request) {
+	// Apply same CORS policy as the main RPC handler.
+	if s.authToken == "" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+	}
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "only GET allowed", http.StatusMethodNotAllowed)
 		return

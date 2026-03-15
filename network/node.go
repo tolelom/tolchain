@@ -133,6 +133,21 @@ func (n *Node) Listener() net.Listener {
 	return n.listener
 }
 
+// ReKeyPeer updates a peer's key in the peer map from oldID to newID.
+// It also updates the peer's ID field. This is used when a peer announces
+// its real node_id via MsgHello.
+func (n *Node) ReKeyPeer(oldID, newID string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	p, ok := n.peers[oldID]
+	if !ok {
+		return
+	}
+	delete(n.peers, oldID)
+	p.ID = newID
+	n.peers[newID] = p
+}
+
 // PeerCount returns the number of currently connected peers.
 func (n *Node) PeerCount() int {
 	n.mu.RLock()
@@ -196,8 +211,15 @@ func (n *Node) acceptLoop() {
 			conn.Close()
 			continue
 		}
-		peer := NewPeer(conn.RemoteAddr().String(), conn.RemoteAddr().String(), conn, n.writeTimeoutSec, n.readTimeoutSec, n.maxMessageSize)
+		id := conn.RemoteAddr().String()
 		n.mu.Lock()
+		if _, exists := n.peers[id]; exists {
+			n.mu.Unlock()
+			conn.Close()
+			slog.Warn("duplicate peer connection rejected", "component", "network", "id", id)
+			continue
+		}
+		peer := NewPeer(id, id, conn, n.writeTimeoutSec, n.readTimeoutSec, n.maxMessageSize)
 		n.peers[peer.ID] = peer
 		n.mu.Unlock()
 		metrics.PeersConnected.Inc()
@@ -216,11 +238,26 @@ func (n *Node) readLoop(peer *Peer) {
 		n.mu.Unlock()
 		metrics.PeersConnected.Dec()
 	}()
+
+	var msgCount int
+	lastReset := time.Now()
+
 	for {
 		msg, err := peer.Receive()
 		if err != nil {
 			return
 		}
+
+		// Per-peer rate limiting: max 100 messages per second.
+		msgCount++
+		if time.Since(lastReset) >= time.Second {
+			msgCount = 0
+			lastReset = time.Now()
+		} else if msgCount > 100 {
+			slog.Warn("peer rate limit exceeded, disconnecting", "component", "network", "peer", peer.ID, "msgs_per_sec", msgCount)
+			return
+		}
+
 		metrics.P2PMessagesReceived.WithLabelValues(string(msg.Type)).Inc()
 		n.mu.RLock()
 		h, ok := n.handlers[msg.Type]
