@@ -3,8 +3,10 @@ package storage
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
 	"github.com/tolelom/tolchain/core"
@@ -16,10 +18,20 @@ type LevelDB struct {
 }
 
 // NewLevelDB opens (or creates) a LevelDB database at path.
+// If the database is corrupted, it attempts automatic recovery.
 func NewLevelDB(path string) (*LevelDB, error) {
 	db, err := leveldb.OpenFile(path, nil)
 	if err != nil {
-		return nil, fmt.Errorf("open leveldb %q: %w", path, err)
+		if _, ok := err.(*errors.ErrCorrupted); ok {
+			slog.Warn("corrupted database detected, attempting recovery", "path", path)
+			db, err = leveldb.RecoverFile(path, nil)
+			if err != nil {
+				return nil, fmt.Errorf("recover leveldb %q: %w", path, err)
+			}
+			slog.Info("database recovery successful", "path", path)
+		} else {
+			return nil, fmt.Errorf("open leveldb %q: %w", path, err)
+		}
 	}
 	return &LevelDB{db: db}, nil
 }

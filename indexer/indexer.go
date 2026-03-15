@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/events"
@@ -258,58 +259,34 @@ func (idx *Indexer) onMarketCancel(ev events.Event) {
 	}
 }
 
-// ---- list helpers ----
+// ---- list helpers (prefix-key approach) ----
 
-func (idx *Indexer) getList(key string) ([]string, error) {
-	data, err := idx.db.Get([]byte(key))
-	if err != nil {
-		if errors.Is(err, core.ErrNotFound) {
-			return nil, nil // empty list
-		}
-		return nil, err
-	}
+// getList collects all item IDs stored under the given prefix using an iterator.
+// Keys are stored as "<prefix>:<item>" → "1".
+func (idx *Indexer) getList(prefix string) ([]string, error) {
+	iterPrefix := prefix + ":"
+	it := idx.db.NewIterator([]byte(iterPrefix))
+	defer it.Release()
 	var ids []string
-	if err := json.Unmarshal(data, &ids); err != nil {
-		return nil, fmt.Errorf("indexer unmarshal: %w", err)
+	for it.Next() {
+		key := string(it.Key())
+		item := strings.TrimPrefix(key, iterPrefix)
+		if item != "" {
+			ids = append(ids, item)
+		}
+	}
+	if err := it.Error(); err != nil {
+		return nil, fmt.Errorf("indexer iterate %s: %w", prefix, err)
 	}
 	return ids, nil
 }
 
-func (idx *Indexer) addToList(key, value string) error {
-	ids, err := idx.getList(key)
-	if err != nil {
-		return fmt.Errorf("read list: %w", err)
-	}
-	for _, id := range ids {
-		if id == value {
-			return nil // already present
-		}
-	}
-	ids = append(ids, value)
-	data, err := json.Marshal(ids)
-	if err != nil {
-		return err
-	}
-	return idx.db.Set([]byte(key), data)
+// addToList stores a single key "<prefix>:<item>" → "1".
+func (idx *Indexer) addToList(prefix, item string) error {
+	return idx.db.Set([]byte(prefix+":"+item), []byte("1"))
 }
 
-func (idx *Indexer) removeFromList(key, value string) error {
-	ids, err := idx.getList(key)
-	if err != nil {
-		return fmt.Errorf("read list: %w", err)
-	}
-	if ids == nil {
-		return nil
-	}
-	filtered := ids[:0]
-	for _, id := range ids {
-		if id != value {
-			filtered = append(filtered, id)
-		}
-	}
-	data, err := json.Marshal(filtered)
-	if err != nil {
-		return err
-	}
-	return idx.db.Set([]byte(key), data)
+// removeFromList deletes the key "<prefix>:<item>".
+func (idx *Indexer) removeFromList(prefix, item string) error {
+	return idx.db.Delete([]byte(prefix + ":" + item))
 }

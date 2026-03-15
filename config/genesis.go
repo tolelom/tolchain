@@ -1,6 +1,9 @@
 package config
 
 import (
+	"fmt"
+	"math"
+
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/crypto"
 )
@@ -13,7 +16,8 @@ const GenesisHash = "00000000000000000000000000000000000000000000000000000000000
 func CreateGenesisBlock(cfg *Config, state core.State, proposerPriv crypto.PrivateKey) (*core.Block, error) {
 	proposerPub := proposerPriv.Public()
 
-	// Credit all alloc accounts
+	// Credit all alloc accounts and track total supply.
+	var totalAlloc uint64
 	for pubkeyHex, balance := range cfg.Genesis.Alloc {
 		acc := &core.Account{
 			Address: pubkeyHex,
@@ -21,6 +25,26 @@ func CreateGenesisBlock(cfg *Config, state core.State, proposerPriv crypto.Priva
 			Nonce:   0,
 		}
 		if err := state.SetAccount(acc); err != nil {
+			return nil, err
+		}
+		if totalAlloc > math.MaxUint64-balance {
+			return nil, fmt.Errorf("genesis alloc overflow: total would exceed uint64 max")
+		}
+		totalAlloc += balance
+	}
+
+	if cfg.MaxTotalSupply > 0 && totalAlloc > cfg.MaxTotalSupply {
+		return nil, fmt.Errorf("genesis alloc %d exceeds max_total_supply %d", totalAlloc, cfg.MaxTotalSupply)
+	}
+
+	// Initialize the total supply tracker so the cap check is accurate.
+	if totalAlloc > 0 || cfg.MaxTotalSupply > 0 {
+		supply := &core.Account{
+			Address: "system:total_supply",
+			Balance: totalAlloc,
+			Nonce:   0,
+		}
+		if err := state.SetAccount(supply); err != nil {
 			return nil, err
 		}
 	}
@@ -32,8 +56,8 @@ func CreateGenesisBlock(cfg *Config, state core.State, proposerPriv crypto.Priva
 
 	block := core.NewBlock(cfg.Genesis.ChainID, 0, GenesisHash, proposerPub.Hex(), nil)
 	block.Header.StateRoot = stateRoot
-	// Embed chain ID in PrevHash comment via TxRoot for identification
-	block.Header.TxRoot = crypto.Hash([]byte(cfg.Genesis.ChainID))
+	// Use the canonical empty TxRoot (genesis has no transactions).
+	block.Header.TxRoot = core.ComputeTxRoot(nil)
 	block.Sign(proposerPriv)
 	return block, nil
 }

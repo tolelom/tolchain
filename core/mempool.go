@@ -9,6 +9,15 @@ import (
 	"github.com/tolelom/tolchain/metrics"
 )
 
+const (
+	maxMempoolSize = 10_000
+	// maxTxAge is the maximum age of a transaction in the mempool (1 hour in nanoseconds).
+	maxTxAge       = int64(time.Hour)
+	// maxTxFuture is the maximum time a transaction timestamp can be in the future (5 minutes in nanoseconds).
+	maxTxFuture    = int64(5 * time.Minute)
+)
+
+
 // Mempool is a thread-safe pending-transaction pool.
 type Mempool struct {
 	mu        sync.RWMutex
@@ -108,6 +117,7 @@ func (m *Mempool) Remove(ids []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	removed := make(map[string]bool, len(ids))
+	actualRemoved := 0
 	for _, id := range ids {
 		if tx, ok := m.txs[id]; ok {
 			// Clean up nonce tracking.
@@ -118,6 +128,7 @@ func (m *Mempool) Remove(ids []string) {
 				}
 			}
 			delete(m.txs, id)
+			actualRemoved++
 		}
 		removed[id] = true
 	}
@@ -128,7 +139,13 @@ func (m *Mempool) Remove(ids []string) {
 		}
 	}
 	m.ord = filtered
-	metrics.MempoolRemoved.Add(float64(len(removed)))
+	// Compact if capacity is more than 2x the length (prevent unbounded growth)
+	if cap(m.ord) > 2*len(m.ord)+64 {
+		compacted := make([]string, len(m.ord))
+		copy(compacted, m.ord)
+		m.ord = compacted
+	}
+	metrics.MempoolRemoved.Add(float64(actualRemoved))
 	metrics.MempoolSize.Set(float64(len(m.txs)))
 }
 

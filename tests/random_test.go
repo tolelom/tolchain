@@ -40,9 +40,10 @@ func TestCommitReveal(t *testing.T) {
 		t.Error("should not be revealed yet")
 	}
 
-	// Reveal
+	// Reveal (must be at least minRevealDelay=2 blocks after commit at height 1)
+	revealBlock := core.NewBlock("test-chain", 4, "prev", operator.PubKey(), nil)
 	revealTx, _ := operator.RandomReveal("test-chain", "drop-001", secret, 1, 0)
-	if err := exec.ExecuteTx(block, revealTx); err != nil {
+	if err := exec.ExecuteTx(revealBlock, revealTx); err != nil {
 		t.Fatalf("reveal: %v", err)
 	}
 
@@ -50,7 +51,7 @@ func TestCommitReveal(t *testing.T) {
 	if !rc.Revealed {
 		t.Error("should be revealed")
 	}
-	expectedResult := crypto.Hash([]byte(secret + block.Header.PrevHash))
+	expectedResult := crypto.Hash([]byte(secret + revealBlock.Header.PrevHash))
 	if rc.Result != expectedResult {
 		t.Errorf("result: got %s want %s", rc.Result, expectedResult)
 	}
@@ -71,9 +72,10 @@ func TestRevealWrongSecret(t *testing.T) {
 	commitTx, _ := operator.RandomCommit("test-chain", "drop-002", commitHash, 0, 0)
 	_ = exec.ExecuteTx(block, commitTx)
 
-	// Wrong secret
+	// Wrong secret (reveal at height 4 to satisfy minRevealDelay)
+	revealBlock := core.NewBlock("test-chain", 4, "prev", operator.PubKey(), nil)
 	revealTx, _ := operator.RandomReveal("test-chain", "drop-002", "wrong-secret", 1, 0)
-	if err := exec.ExecuteTx(block, revealTx); err == nil {
+	if err := exec.ExecuteTx(revealBlock, revealTx); err == nil {
 		t.Error("should fail: wrong secret")
 	}
 }
@@ -94,12 +96,13 @@ func TestDoubleReveal(t *testing.T) {
 	commitTx, _ := operator.RandomCommit("test-chain", "drop-003", commitHash, 0, 0)
 	_ = exec.ExecuteTx(block, commitTx)
 
+	revealBlock := core.NewBlock("test-chain", 4, "prev", operator.PubKey(), nil)
 	revealTx, _ := operator.RandomReveal("test-chain", "drop-003", secret, 1, 0)
-	_ = exec.ExecuteTx(block, revealTx)
+	_ = exec.ExecuteTx(revealBlock, revealTx)
 
 	// Second reveal should fail
 	revealTx2, _ := operator.RandomReveal("test-chain", "drop-003", secret, 2, 0)
-	if err := exec.ExecuteTx(block, revealTx2); err == nil {
+	if err := exec.ExecuteTx(revealBlock, revealTx2); err == nil {
 		t.Error("should fail: already revealed")
 	}
 }

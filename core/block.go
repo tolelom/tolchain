@@ -18,6 +18,8 @@ type BlockHeader struct {
 	PrevHash  string `json:"prev_hash"`
 	StateRoot string `json:"state_root"` // hash of state after executing this block
 	TxRoot    string `json:"tx_root"`    // hash of all transaction IDs
+	// Timestamp is set at block creation time using time.Now().UnixNano().
+	// Validators accept timestamps within [-1 hour, +15 seconds] of their local clock.
 	Timestamp int64  `json:"timestamp"`
 	Proposer  string `json:"proposer"` // proposer's pubkey hex
 }

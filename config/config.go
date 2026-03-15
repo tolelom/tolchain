@@ -14,6 +14,13 @@ const (
 	DefaultP2PPort = 30303
 	// DefaultMaxBlockTxs is the default maximum transactions per block.
 	DefaultMaxBlockTxs = 500
+	// MaxBlockTxsUpperBound is the hard cap for max_block_txs.
+	MaxBlockTxsUpperBound = 10000
+	// DefaultLogLevel is the default structured logging level.
+	DefaultLogLevel = "info"
+	// DefaultPruneKeepBlocks is the default number of recent blocks to keep.
+	// 0 means no pruning (keep all blocks).
+	DefaultPruneKeepBlocks = 0
 )
 
 // MempoolConfig controls transaction pool behavior.
@@ -82,11 +89,14 @@ type Config struct {
 	Genesis      GenesisConfig `json:"genesis"`
 	SeedPeers    []SeedPeer    `json:"seed_peers,omitempty"`     // initial peers to connect to
 	TLS          *TLSConfig    `json:"tls,omitempty"`           // nil → plain TCP
-	RPCAuthToken string        `json:"rpc_auth_token,omitempty"` // empty → no auth
-	Mempool      MempoolConfig    `json:"mempool,omitempty"`
-	Network      NetworkConfig    `json:"network,omitempty"`
-	RPC          RPCServerConfig  `json:"rpc,omitempty"`
-	Consensus    ConsensusConfig  `json:"consensus,omitempty"`
+	RPCAuthToken    string           `json:"rpc_auth_token,omitempty"`    // empty → no auth
+	LogLevel        string           `json:"log_level,omitempty"`        // "debug","info","warn","error"; default "info"
+	PruneKeepBlocks int64            `json:"prune_keep_blocks,omitempty"` // 0 → no pruning; >0 → keep only the latest N blocks
+	MaxTotalSupply  uint64           `json:"max_total_supply,omitempty"` // 0 → unlimited; >0 → hard cap on total minted tokens
+	Mempool         MempoolConfig    `json:"mempool,omitempty"`
+	Network         NetworkConfig    `json:"network,omitempty"`
+	RPC             RPCServerConfig  `json:"rpc,omitempty"`
+	Consensus       ConsensusConfig  `json:"consensus,omitempty"`
 }
 
 // ApplyDefaults fills zero-valued fields with sensible defaults.
@@ -154,7 +164,9 @@ func DefaultConfig() *Config {
 		DataDir:     "./data",
 		RPCPort:     DefaultRPCPort,
 		P2PPort:     DefaultP2PPort,
-		MaxBlockTxs: DefaultMaxBlockTxs,
+		MaxBlockTxs:     DefaultMaxBlockTxs,
+		LogLevel:        DefaultLogLevel,
+		PruneKeepBlocks: DefaultPruneKeepBlocks,
 		Genesis: GenesisConfig{
 			ChainID: "tolchain-dev",
 			Alloc:   map[string]uint64{},
@@ -200,6 +212,15 @@ func (c *Config) Validate() error {
 	}
 	if c.RPCPort == c.P2PPort {
 		return fmt.Errorf("rpc_port and p2p_port must not be the same (%d)", c.RPCPort)
+	}
+	if c.MaxBlockTxs > MaxBlockTxsUpperBound {
+		return fmt.Errorf("max_block_txs must be at most %d, got %d", MaxBlockTxsUpperBound, c.MaxBlockTxs)
+	}
+	switch c.LogLevel {
+	case "debug", "info", "warn", "error", "":
+		// valid
+	default:
+		return fmt.Errorf("log_level must be one of debug/info/warn/error, got %q", c.LogLevel)
 	}
 	if len(c.Validators) == 0 {
 		return fmt.Errorf("validators list must not be empty")

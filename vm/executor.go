@@ -3,6 +3,7 @@ package vm
 import (
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/events"
@@ -11,18 +12,21 @@ import (
 // Context is passed to every Handler and provides access to the chain state,
 // the current block, the triggering transaction, and the event emitter.
 type Context struct {
-	State     core.State
-	Block     *core.Block
-	Tx        *core.Transaction
-	Emitter   events.EventEmitter
-	Operators map[string]bool // operator pubkeys; nil or empty → no restrictions
+	State          core.State
+	Block          *core.Block
+	Tx             *core.Transaction
+	Emitter        events.EventEmitter
+	Operators      map[string]bool // operator pubkeys; nil or empty → no restrictions
+	MaxTotalSupply uint64          // 0 → unlimited; >0 → hard cap on total minted tokens
 }
 
 // Executor applies transactions to the state using the global Handler registry.
 type Executor struct {
-	state     core.State
-	emitter   events.EventEmitter
-	operators map[string]bool
+	mu             sync.Mutex
+	state          core.State
+	emitter        events.EventEmitter
+	operators      map[string]bool
+	maxTotalSupply uint64
 }
 
 // NewExecutor creates an Executor with the given state and event emitter.
@@ -32,11 +36,23 @@ func NewExecutor(state core.State, emitter events.EventEmitter) *Executor {
 
 // SetEmitter replaces the event emitter (e.g. with a Buffer during execution).
 func (e *Executor) SetEmitter(em events.EventEmitter) {
+	e.mu.Lock()
 	e.emitter = em
+	e.mu.Unlock()
+}
+
+// SetMaxTotalSupply configures the hard cap on total minted tokens.
+// 0 means unlimited.
+func (e *Executor) SetMaxTotalSupply(cap uint64) {
+	e.mu.Lock()
+	e.maxTotalSupply = cap
+	e.mu.Unlock()
 }
 
 // SetOperators configures the set of authorised operator public keys.
 func (e *Executor) SetOperators(ops []string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if len(ops) == 0 {
 		e.operators = nil
 		return
@@ -53,8 +69,10 @@ func (e *Executor) SetOperators(ops []string) {
 // EventBlockCommit is emitted by the caller (consensus) after signing so
 // the event carries the correct block hash.
 func (e *Executor) ExecuteBlock(block *core.Block) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	for _, tx := range block.Transactions {
-		if err := e.ExecuteTx(block, tx); err != nil {
+		if err := e.executeTxLocked(block, tx); err != nil {
 			return fmt.Errorf("tx %s failed: %w", tx.ID, err)
 		}
 	}
@@ -63,6 +81,13 @@ func (e *Executor) ExecuteBlock(block *core.Block) error {
 
 // ExecuteTx verifies and executes a single transaction with snapshot/rollback.
 func (e *Executor) ExecuteTx(block *core.Block, tx *core.Transaction) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.executeTxLocked(block, tx)
+}
+
+// executeTxLocked is the internal implementation; caller must hold e.mu.
+func (e *Executor) executeTxLocked(block *core.Block, tx *core.Transaction) error {
 	if err := tx.Verify(); err != nil {
 		return fmt.Errorf("signature: %w", err)
 	}
@@ -148,11 +173,12 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction) error {
 	}
 
 	ctx := &Context{
-		State:     e.state,
-		Block:     block,
-		Tx:        tx,
-		Emitter:   e.emitter,
-		Operators: e.operators,
+		State:          e.state,
+		Block:          block,
+		Tx:             tx,
+		Emitter:        e.emitter,
+		Operators:      e.operators,
+		MaxTotalSupply: e.maxTotalSupply,
 	}
 	return globalRegistry.Execute(tx.Type, ctx, tx.Payload)
 }

@@ -1,22 +1,32 @@
 package rpc
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/tolelom/tolchain/events"
 )
 
+// sseEventBufferSize is the default per-client event channel capacity.
+// Slow clients that exceed this buffer will have events dropped.
+const sseEventBufferSize = 64
+
+// maxSSEClients is the maximum number of concurrent SSE connections.
+const maxSSEClients = 100
+
 // SSEBroker manages SSE client connections and broadcasts chain events.
 type SSEBroker struct {
-	mu             sync.Mutex
-	clients        map[chan events.Event]map[events.EventType]bool // nil filter = all events
-	authToken      string
-	eventBufSize   int
+	mu           sync.Mutex
+	clients      map[chan events.Event]map[events.EventType]bool // nil filter = all events
+	authToken    string
+	eventBufSize int
+	clientCount  atomic.Int32
 }
 
 // NewSSEBroker creates a broker that subscribes to all event types on the emitter.
@@ -60,16 +70,30 @@ func (b *SSEBroker) broadcast(ev events.Event) {
 }
 
 // ServeHTTP handles SSE connections. Query param: ?types=event1,event2
+//
+// NOTE: The SSE endpoint does not apply per-request IP rate limiting because
+// SSE connections are long-lived. In production, SSE should be served behind
+// a reverse proxy (e.g. nginx, Caddy) that enforces its own connection-level
+// rate limiting and max-connection policies.
 func (b *SSEBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if b.authToken != "" {
-		if r.Header.Get("Authorization") != "Bearer "+b.authToken {
+		got := r.Header.Get("Authorization")
+		expected := "Bearer " + b.authToken
+		if subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 	}
 
+	if b.clientCount.Load() >= maxSSEClients {
+		http.Error(w, "too many SSE clients", http.StatusServiceUnavailable)
+		return
+	}
+	b.clientCount.Add(1)
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		b.clientCount.Add(-1)
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
@@ -95,6 +119,7 @@ func (b *SSEBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
 		delete(b.clients, ch)
 		b.mu.Unlock()
+		b.clientCount.Add(-1)
 	}()
 
 	ctx := r.Context()

@@ -8,6 +8,11 @@ import (
 	"github.com/tolelom/tolchain/indexer"
 )
 
+// NOTE: RPC state queries (getBalance, getAsset, etc.) may return partially-applied
+// state during block execution because there is no read-snapshot isolation.
+// Implementing MVCC or a read-only state snapshot would fix this, but is deferred
+// as the window is very small (block execution takes milliseconds).
+
 // Handler holds all dependencies needed to serve RPC methods.
 type Handler struct {
 	bc      *core.Blockchain

@@ -54,11 +54,28 @@ func NewSyncer(node *Node, bc *core.Blockchain, validator BlockValidator, exec B
 	node.Handle(MsgHello, s.handleHello)
 	node.Handle(MsgGetBlocks, s.handleGetBlocks)
 	node.Handle(MsgBlocks, s.handleBlocks)
+	node.Handle(MsgBlock, s.handleBlock)
 	return s
 }
 
 // handleHello triggers an initial block sync when a peer announces itself.
-func (s *Syncer) handleHello(peer *Peer, _ Message) {
+// If the peer declares a node_id different from its current ID, re-key the
+// peer map so future lookups use the declared identity.
+func (s *Syncer) handleHello(peer *Peer, msg Message) {
+	var hello struct {
+		NodeID string `json:"node_id"`
+	}
+	if msg.Payload != nil {
+		if err := json.Unmarshal(msg.Payload, &hello); err != nil {
+			slog.Warn("malformed hello payload", "component", "sync", "peer", peer.ID, "error", err)
+		}
+	}
+	if hello.NodeID != "" && hello.NodeID != peer.ID {
+		oldID := peer.ID
+		s.node.ReKeyPeer(oldID, hello.NodeID)
+		slog.Info("peer re-keyed after hello", "component", "sync", "old_id", oldID, "new_id", hello.NodeID)
+	}
+
 	fromHeight := s.bc.Height() + 1
 	if err := s.RequestBlocks(peer, fromHeight); err != nil {
 		slog.Error("failed to request blocks", "component", "sync", "peer", peer.ID, "error", err)
@@ -139,7 +156,7 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 				os.Exit(1)
 				}
 				slog.Error("block execution failed", "component", "sync", "height", b.Header.Height, "error", err)
-				continue
+				return
 			}
 			s.exec.SetEmitter(s.emitter)
 		}
@@ -167,7 +184,7 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 				}
 			}
 			slog.Error("block add failed", "component", "sync", "height", b.Header.Height, "error", err)
-			continue
+			return
 		}
 
 		if s.exec != nil && s.state != nil {
@@ -198,4 +215,99 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 			slog.Error("follow-up request failed", "component", "sync", "peer", peer.ID, "error", err)
 		}
 	}
+}
+
+// handleBlock processes a single block broadcast from a proposer in real-time.
+// It only accepts the block if it is exactly the next expected block (tip+1);
+// otherwise it is silently ignored (the node already has it, or needs batch sync).
+func (s *Syncer) handleBlock(_ *Peer, msg Message) {
+	var b core.Block
+	if err := json.Unmarshal(msg.Payload, &b); err != nil {
+		slog.Error("unmarshal block", "component", "sync", "error", err)
+		return
+	}
+
+	// Only process if this is the next expected block.
+	expected := s.bc.Height() + 1
+	if b.Header.Height != expected {
+		return
+	}
+
+	if s.validator != nil {
+		if err := s.validator.ValidateBlock(&b); err != nil {
+			slog.Error("block validation failed", "component", "sync", "height", b.Header.Height, "error", err)
+			return
+		}
+	}
+
+	var snapID int
+	var buf *events.Buffer
+	if s.exec != nil && s.state != nil {
+		var err error
+		snapID, err = s.state.Snapshot()
+		if err != nil {
+			slog.Error("block snapshot failed", "component", "sync", "height", b.Header.Height, "error", err)
+			return
+		}
+		buf = events.NewBuffer()
+		s.exec.SetEmitter(buf)
+		if err := s.exec.ExecuteBlock(&b); err != nil {
+			s.exec.SetEmitter(s.emitter)
+			buf.Discard()
+			if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
+				slog.Error("FATAL: revert failed after exec error", "component", "sync", "height", b.Header.Height, "revert_error", revErr, "exec_error", err)
+				os.Exit(1)
+			}
+			slog.Error("block execution failed", "component", "sync", "height", b.Header.Height, "error", err)
+			return
+		}
+		s.exec.SetEmitter(s.emitter)
+	}
+
+	// Verify state root matches after execution.
+	if s.exec != nil && s.state != nil {
+		computedRoot := s.state.ComputeRoot()
+		if b.Header.StateRoot != "" && computedRoot != b.Header.StateRoot {
+			buf.Discard()
+			if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
+				slog.Error("FATAL: revert failed after state root mismatch", "component", "sync", "height", b.Header.Height, "error", revErr)
+				os.Exit(1)
+			}
+			slog.Error("block state root mismatch", "component", "sync", "height", b.Header.Height, "computed", computedRoot, "want", b.Header.StateRoot)
+			return
+		}
+	}
+
+	if err := s.bc.AddBlock(&b); err != nil {
+		if s.exec != nil && s.state != nil {
+			buf.Discard()
+			if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
+				slog.Error("FATAL: revert failed after add error", "component", "sync", "height", b.Header.Height, "revert_error", revErr, "add_error", err)
+				os.Exit(1)
+			}
+		}
+		slog.Error("block add failed", "component", "sync", "height", b.Header.Height, "error", err)
+		return
+	}
+
+	if s.exec != nil && s.state != nil {
+		if err := s.state.Commit(); err != nil {
+			slog.Error("FATAL: block state commit failed", "component", "sync", "height", b.Header.Height, "error", err)
+			os.Exit(1)
+		}
+		if buf != nil {
+			buf.Flush(s.emitter)
+		}
+	}
+
+	// Remove committed transactions from the mempool.
+	if s.mempool != nil && len(b.Transactions) > 0 {
+		txIDs := make([]string, len(b.Transactions))
+		for i, tx := range b.Transactions {
+			txIDs[i] = tx.ID
+		}
+		s.mempool.Remove(txIDs)
+	}
+
+	slog.Info("accepted broadcast block", "component", "sync", "height", b.Header.Height, "hash", b.Hash)
 }
