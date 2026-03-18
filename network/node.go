@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -230,7 +231,7 @@ func (n *Node) acceptLoop() {
 func (n *Node) readLoop(peer *Peer) {
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("readLoop panic", "component", "network", "peer", peer.ID, "panic", r)
+			slog.Error("readLoop panic", "component", "network", "peer", peer.ID, "panic", r, "stack", string(debug.Stack()))
 		}
 		peer.Close()
 		n.mu.Lock()

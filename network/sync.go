@@ -134,6 +134,12 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 			}
 		}
 
+		// Acquire block-execution write lock to prevent RPC from seeing
+		// partially-applied state during execution.
+		if s.state != nil {
+			s.state.BlockLock()
+		}
+
 		// Take a snapshot so we can revert if AddBlock fails.
 		var snapID int
 		var buf *events.Buffer
@@ -141,6 +147,7 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 			var err error
 			snapID, err = s.state.Snapshot()
 			if err != nil {
+				s.state.BlockUnlock()
 				slog.Error("block snapshot failed", "component", "sync", "height", b.Header.Height, "error", err)
 				continue
 			}
@@ -155,6 +162,7 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 					slog.Error("FATAL: revert failed after exec error", "component", "sync", "height", b.Header.Height, "revert_error", revErr, "exec_error", err)
 				os.Exit(1)
 				}
+				s.state.BlockUnlock()
 				slog.Error("block execution failed", "component", "sync", "height", b.Header.Height, "error", err)
 				return
 			}
@@ -170,6 +178,7 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 					slog.Error("FATAL: revert failed after state root mismatch", "component", "sync", "height", b.Header.Height, "error", revErr)
 				os.Exit(1)
 				}
+				s.state.BlockUnlock()
 				slog.Error("block state root mismatch", "component", "sync", "height", b.Header.Height, "computed", computedRoot, "want", b.Header.StateRoot)
 				return
 			}
@@ -182,6 +191,9 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 					slog.Error("FATAL: revert failed after add error", "component", "sync", "height", b.Header.Height, "revert_error", revErr, "add_error", err)
 				os.Exit(1)
 				}
+			}
+			if s.state != nil {
+				s.state.BlockUnlock()
 			}
 			slog.Error("block add failed", "component", "sync", "height", b.Header.Height, "error", err)
 			return
@@ -196,6 +208,10 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 			if buf != nil {
 				buf.Flush(s.emitter)
 			}
+		}
+
+		if s.state != nil {
+			s.state.BlockUnlock()
 		}
 
 		// Remove synced transactions from the mempool.
@@ -240,12 +256,19 @@ func (s *Syncer) handleBlock(_ *Peer, msg Message) {
 		}
 	}
 
+	// Acquire block-execution write lock to prevent RPC from seeing
+	// partially-applied state during execution.
+	if s.state != nil {
+		s.state.BlockLock()
+	}
+
 	var snapID int
 	var buf *events.Buffer
 	if s.exec != nil && s.state != nil {
 		var err error
 		snapID, err = s.state.Snapshot()
 		if err != nil {
+			s.state.BlockUnlock()
 			slog.Error("block snapshot failed", "component", "sync", "height", b.Header.Height, "error", err)
 			return
 		}
@@ -258,6 +281,7 @@ func (s *Syncer) handleBlock(_ *Peer, msg Message) {
 				slog.Error("FATAL: revert failed after exec error", "component", "sync", "height", b.Header.Height, "revert_error", revErr, "exec_error", err)
 				os.Exit(1)
 			}
+			s.state.BlockUnlock()
 			slog.Error("block execution failed", "component", "sync", "height", b.Header.Height, "error", err)
 			return
 		}
@@ -273,6 +297,7 @@ func (s *Syncer) handleBlock(_ *Peer, msg Message) {
 				slog.Error("FATAL: revert failed after state root mismatch", "component", "sync", "height", b.Header.Height, "error", revErr)
 				os.Exit(1)
 			}
+			s.state.BlockUnlock()
 			slog.Error("block state root mismatch", "component", "sync", "height", b.Header.Height, "computed", computedRoot, "want", b.Header.StateRoot)
 			return
 		}
@@ -286,6 +311,9 @@ func (s *Syncer) handleBlock(_ *Peer, msg Message) {
 				os.Exit(1)
 			}
 		}
+		if s.state != nil {
+			s.state.BlockUnlock()
+		}
 		slog.Error("block add failed", "component", "sync", "height", b.Header.Height, "error", err)
 		return
 	}
@@ -298,6 +326,10 @@ func (s *Syncer) handleBlock(_ *Peer, msg Message) {
 		if buf != nil {
 			buf.Flush(s.emitter)
 		}
+	}
+
+	if s.state != nil {
+		s.state.BlockUnlock()
 	}
 
 	// Remove committed transactions from the mempool.

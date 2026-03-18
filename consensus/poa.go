@@ -97,10 +97,15 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 		nextHeight = tip.Header.Height + 1
 	}
 
+	// Acquire the block-execution write lock so that RPC queries (which hold
+	// the read lock) cannot observe partially-applied state.
+	p.state.BlockLock()
+
 	// Take a block-level snapshot so we can rollback all state changes if
 	// AddBlock fails later.
 	blockSnapID, err := p.state.Snapshot()
 	if err != nil {
+		p.state.BlockUnlock()
 		return nil, fmt.Errorf("block snapshot: %w", err)
 	}
 
@@ -147,6 +152,7 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 			slog.Error("FATAL: AddBlock failed and snapshot revert failed", "component", "consensus", "height", block.Header.Height, "revert_error", revErr, "add_error", err)
 			os.Exit(1)
 		}
+		p.state.BlockUnlock()
 		return nil, fmt.Errorf("add block: %w", err)
 	}
 
@@ -155,6 +161,9 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 		slog.Error("FATAL: block stored but state commit failed", "component", "consensus", "height", block.Header.Height, "error", err)
 		os.Exit(1)
 	}
+
+	// Release the block-execution lock now that state is fully committed.
+	p.state.BlockUnlock()
 
 	// Flush buffered tx-level events now that the block is committed.
 	buf.Flush(p.emitter)
@@ -227,6 +236,11 @@ func (p *PoA) ValidateBlock(block *core.Block) error {
 	maxTimeDrift := int64(p.cfg.Consensus.MaxTimeDriftSec) * int64(time.Second)
 	if block.Header.Timestamp > now+maxTimeDrift {
 		return fmt.Errorf("block timestamp too far in future: %d (now %d)", block.Header.Timestamp, now)
+	}
+	// Hard cap: reject blocks more than 1 hour in the future regardless of config.
+	const maxFutureDrift = int64(time.Hour)
+	if block.Header.Timestamp > now+maxFutureDrift {
+		return fmt.Errorf("block timestamp exceeds 1h hard cap: %d (now %d)", block.Header.Timestamp, now)
 	}
 
 	// Validate previous hash linkage

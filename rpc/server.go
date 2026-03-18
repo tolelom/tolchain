@@ -55,9 +55,7 @@ func NewServer(addr string, handler *Handler, authToken string, sseBroker *SSEBr
 	if statusFunc != nil {
 		mux.HandleFunc("/status", s.serveStatus)
 	}
-	// KNOWN LIMITATION (MEDIUM): The /metrics endpoint has no authentication.
-	// In production, restrict access via reverse proxy rules or network policies.
-	mux.Handle("/metrics", metrics.Handler())
+	mux.HandleFunc("/metrics", s.serveMetrics)
 	s.srv = &http.Server{
 		Addr:              addr,
 		Handler:           mux,
@@ -188,6 +186,18 @@ func (s *Server) serveStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, s.statusFunc())
+}
+
+func (s *Server) serveMetrics(w http.ResponseWriter, r *http.Request) {
+	if s.authToken != "" {
+		got := r.Header.Get("Authorization")
+		expected := "Bearer " + s.authToken
+		if subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+	metrics.Handler().ServeHTTP(w, r)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
