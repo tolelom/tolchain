@@ -8,10 +8,9 @@ import (
 	"github.com/tolelom/tolchain/indexer"
 )
 
-// NOTE: RPC state queries (getBalance, getAsset, etc.) may return partially-applied
-// state during block execution because there is no read-snapshot isolation.
-// Implementing MVCC or a read-only state snapshot would fix this, but is deferred
-// as the window is very small (block execution takes milliseconds).
+// State queries acquire a read lock (BlockRLock) so they never observe
+// partially-applied state during block execution. The write lock is held
+// by consensus/sync during the execute-commit cycle.
 
 // Handler holds all dependencies needed to serve RPC methods.
 type Handler struct {
@@ -117,7 +116,9 @@ func (h *Handler) getBalance(req Request) Response {
 	if params.Address == "" {
 		return errResponse(req.ID, CodeInvalidParams, "address is required")
 	}
+	h.state.BlockRLock()
 	acc, err := h.state.GetAccount(params.Address)
+	h.state.BlockRUnlock()
 	if err != nil {
 		return errResponse(req.ID, CodeInternalError, err.Error())
 	}
@@ -134,7 +135,9 @@ func (h *Handler) getAsset(req Request) Response {
 	if params.ID == "" {
 		return errResponse(req.ID, CodeInvalidParams, "id is required")
 	}
+	h.state.BlockRLock()
 	asset, err := h.state.GetAsset(params.ID)
+	h.state.BlockRUnlock()
 	if err != nil {
 		return errResponse(req.ID, CodeInternalError, err.Error())
 	}
@@ -151,7 +154,9 @@ func (h *Handler) getSession(req Request) Response {
 	if params.ID == "" {
 		return errResponse(req.ID, CodeInvalidParams, "id is required")
 	}
+	h.state.BlockRLock()
 	sess, err := h.state.GetSession(params.ID)
+	h.state.BlockRUnlock()
 	if err != nil {
 		return errResponse(req.ID, CodeInternalError, err.Error())
 	}
@@ -168,7 +173,9 @@ func (h *Handler) getListing(req Request) Response {
 	if params.ID == "" {
 		return errResponse(req.ID, CodeInvalidParams, "id is required")
 	}
+	h.state.BlockRLock()
 	listing, err := h.state.GetListing(params.ID)
+	h.state.BlockRUnlock()
 	if err != nil {
 		return errResponse(req.ID, CodeInternalError, err.Error())
 	}
@@ -230,7 +237,9 @@ func (h *Handler) getTemplate(req Request) Response {
 	if params.ID == "" {
 		return errResponse(req.ID, CodeInvalidParams, "id is required")
 	}
+	h.state.BlockRLock()
 	tmpl, err := h.state.GetTemplate(params.ID)
+	h.state.BlockRUnlock()
 	if err != nil {
 		return errResponse(req.ID, CodeInternalError, err.Error())
 	}
@@ -313,7 +322,9 @@ func (h *Handler) getInventory(req Request) Response {
 	if params.Owner == "" {
 		return errResponse(req.ID, CodeInvalidParams, "owner is required")
 	}
+	h.state.BlockRLock()
 	inv, err := h.state.GetInventory(params.Owner)
+	h.state.BlockRUnlock()
 	if err != nil {
 		return errResponse(req.ID, CodeInternalError, err.Error())
 	}
@@ -330,7 +341,9 @@ func (h *Handler) getRandomCommitment(req Request) Response {
 	if params.ID == "" {
 		return errResponse(req.ID, CodeInvalidParams, "id is required")
 	}
+	h.state.BlockRLock()
 	rc, err := h.state.GetRandomCommitment(params.ID)
+	h.state.BlockRUnlock()
 	if err != nil {
 		return errResponse(req.ID, CodeInternalError, err.Error())
 	}

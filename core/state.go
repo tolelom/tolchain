@@ -110,4 +110,17 @@ type State interface {
 	// Commit flushes the write buffer to the underlying DB and clears it.
 	// Always call ComputeRoot() first to obtain the root for the block header.
 	Commit() error
+
+	// BlockRLock acquires a read lock on the block-execution mutex.
+	// RPC state queries should hold this lock to avoid reading partially-applied
+	// state during block execution.
+	BlockRLock()
+	// BlockRUnlock releases the read lock acquired by BlockRLock.
+	BlockRUnlock()
+	// BlockLock acquires an exclusive write lock on the block-execution mutex.
+	// Block producers (consensus, sync) should hold this lock during the
+	// entire execute-commit cycle to prevent RPC from seeing intermediate state.
+	BlockLock()
+	// BlockUnlock releases the write lock acquired by BlockLock.
+	BlockUnlock()
 }

@@ -44,8 +44,14 @@ type stateSnapshot struct {
 // StateDB implements core.State on top of a DB with in-memory write buffer,
 // snapshot/rollback, and deterministic state-root computation.
 // All methods are protected by a mutex for future-proof concurrency safety.
+//
+// blockMu is a separate RWMutex that provides read-snapshot isolation:
+// block execution (consensus, sync) holds the write lock, while RPC state
+// queries hold the read lock. This prevents RPC from observing partially-
+// applied state during block execution.
 type StateDB struct {
 	mu        sync.Mutex
+	blockMu   sync.RWMutex
 	db        DB
 	dirty     map[string][]byte
 	deleted   map[string]bool
@@ -284,6 +290,24 @@ func (s *StateDB) SetRandomCommitment(rc *core.RandomCommitment) error {
 	s.set(prefixRandomCommit+rc.ID, data)
 	return nil
 }
+
+// ---- Block-level read-snapshot isolation ----
+
+// BlockRLock acquires the block-execution read lock. Multiple RPC queries
+// can hold this concurrently, but they will block while a block is being
+// executed (write lock held).
+func (s *StateDB) BlockRLock()   { s.blockMu.RLock() }
+
+// BlockRUnlock releases the block-execution read lock.
+func (s *StateDB) BlockRUnlock() { s.blockMu.RUnlock() }
+
+// BlockLock acquires the exclusive block-execution write lock. This must be
+// held during the entire Snapshot → ExecuteTx → ComputeRoot → Commit cycle
+// so that RPC queries never observe partially-applied state.
+func (s *StateDB) BlockLock()   { s.blockMu.Lock() }
+
+// BlockUnlock releases the exclusive block-execution write lock.
+func (s *StateDB) BlockUnlock() { s.blockMu.Unlock() }
 
 // ---- Snapshot / Rollback / Commit ----
 
