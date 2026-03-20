@@ -1,7 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "Bash(go build:*)"
+      "Bash(go build:*)",
+      "mcp__claude_ai_Notion__notion-fetch",
+      "Bash(wc:*)",
+      "Bash(go test:*)",
+      "Bash(cat:*)",
+      "Bash(go get:*)",
+      "mcp__claude_ai_Notion__notion-search",
+      "Bash(go:*)",
+      "mcp__claude_ai_Notion__notion-update-page",
+      "mcp__claude_ai_Notion__notion-create-pages"
     ]
   }
 }
