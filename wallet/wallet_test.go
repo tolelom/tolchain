@@ -445,3 +445,65 @@ func TestNewTx_UnmarshalablePayload(t *testing.T) {
 		t.Error("expected error for unmarshalable payload, got nil")
 	}
 }
+
+func TestGrantDelegation(t *testing.T) {
+	w, _ := Generate()
+	_, pub2, _ := crypto.GenerateKeyPair()
+	tx, err := w.GrantDelegation("chain", pub2.Hex(), []string{"transfer", "list_market"}, 1700000000, 10, 5000, 0, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Verify(); err != nil {
+		t.Fatal(err)
+	}
+	if tx.Type != "grant_delegation" {
+		t.Errorf("got type %s", tx.Type)
+	}
+	if tx.From != w.PubKey() {
+		t.Errorf("From = %s, want %s", tx.From, w.PubKey())
+	}
+}
+
+func TestRevokeDelegation(t *testing.T) {
+	w, _ := Generate()
+	_, pub2, _ := crypto.GenerateKeyPair()
+	tx, err := w.RevokeDelegation("chain", pub2.Hex(), 0, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Verify(); err != nil {
+		t.Fatal(err)
+	}
+	if tx.Type != "revoke_delegation" {
+		t.Errorf("got type %s", tx.Type)
+	}
+}
+
+func TestNewDelegatedTx(t *testing.T) {
+	grantee, _ := Generate()
+	_, granterPub, _ := crypto.GenerateKeyPair()
+	tx, err := grantee.NewDelegatedTx("chain", "transfer", granterPub.Hex(), 0, 5, map[string]any{
+		"to":     "deadbeef",
+		"amount": 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Verify(); err != nil {
+		t.Fatal(err)
+	}
+	if tx.OnBehalfOf != granterPub.Hex() {
+		t.Errorf("OnBehalfOf = %s, want %s", tx.OnBehalfOf, granterPub.Hex())
+	}
+	if tx.From != grantee.PubKey() {
+		t.Errorf("From = %s, want %s (grantee)", tx.From, grantee.PubKey())
+	}
+	// Verify hash includes OnBehalfOf
+	txNoDelegate, _ := grantee.NewTx("chain", "transfer", 0, 5, map[string]any{
+		"to":     "deadbeef",
+		"amount": 100,
+	})
+	if tx.Hash() == txNoDelegate.Hash() {
+		t.Error("delegated TX should have different hash than non-delegated")
+	}
+}
