@@ -22,7 +22,7 @@ func newCtx(t *testing.T, state core.State, fromPubHex string) *vm.Context {
 		PrevHash:  "abc123",
 	}}
 	tx := &core.Transaction{ID: "tx1", From: fromPubHex, Type: core.TxGrantReward}
-	return &vm.Context{State: state, Block: block, Tx: tx, Emitter: emitter}
+	return &vm.Context{State: state, Block: block, Tx: tx, Emitter: emitter, EffectiveSender: fromPubHex}
 }
 
 func TestGrantReward_TokensOnly(t *testing.T) {

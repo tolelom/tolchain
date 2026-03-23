@@ -30,7 +30,7 @@ func handleListMarket(ctx *vm.Context, payload json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("asset %q not found: %w", p.AssetID, err)
 	}
-	if asset.Owner != ctx.Tx.From {
+	if asset.Owner != ctx.EffectiveSender {
 		return fmt.Errorf("only the asset owner can list it: %w", core.ErrUnauthorized)
 	}
 	if !asset.Tradeable {
@@ -49,7 +49,7 @@ func handleListMarket(ctx *vm.Context, payload json.RawMessage) error {
 	listing := &core.MarketListing{
 		ID:        listingID,
 		AssetID:   p.AssetID,
-		Seller:    ctx.Tx.From,
+		Seller:    ctx.EffectiveSender,
 		Price:     p.Price,
 		Active:    true,
 		CreatedAt: ctx.Block.Header.Timestamp,
@@ -88,12 +88,12 @@ func handleBuyMarket(ctx *vm.Context, payload json.RawMessage) error {
 	if !listing.Active {
 		return fmt.Errorf("listing %q is no longer active", p.ListingID)
 	}
-	if listing.Seller == ctx.Tx.From {
+	if listing.Seller == ctx.EffectiveSender {
 		return fmt.Errorf("seller cannot buy their own listing: %w", core.ErrUnauthorized)
 	}
 
 	// Deduct price from buyer
-	buyer, err := ctx.State.GetAccount(ctx.Tx.From)
+	buyer, err := ctx.State.GetAccount(ctx.EffectiveSender)
 	if err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func handleBuyMarket(ctx *vm.Context, payload json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("asset %q not found: %w", listing.AssetID, err)
 	}
-	asset.Owner = ctx.Tx.From
+	asset.Owner = ctx.EffectiveSender
 	asset.ActiveListingID = ""
 	if err := ctx.State.SetAsset(asset); err != nil {
 		return err
@@ -144,7 +144,7 @@ func handleBuyMarket(ctx *vm.Context, payload json.RawMessage) error {
 			Data: map[string]any{
 				"listing_id": p.ListingID,
 				"asset_id":   listing.AssetID,
-				"buyer":      ctx.Tx.From,
+				"buyer":      ctx.EffectiveSender,
 				"seller":     listing.Seller,
 				"price":      listing.Price,
 			},
@@ -166,7 +166,7 @@ func handleCancelListing(ctx *vm.Context, payload json.RawMessage) error {
 	if !listing.Active {
 		return fmt.Errorf("listing %q is not active", p.ListingID)
 	}
-	if listing.Seller != ctx.Tx.From {
+	if listing.Seller != ctx.EffectiveSender {
 		return fmt.Errorf("only the seller can cancel a listing: %w", core.ErrUnauthorized)
 	}
 

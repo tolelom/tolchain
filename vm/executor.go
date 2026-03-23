@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/events"
@@ -12,12 +13,13 @@ import (
 // Context is passed to every Handler and provides access to the chain state,
 // the current block, the triggering transaction, and the event emitter.
 type Context struct {
-	State          core.State
-	Block          *core.Block
-	Tx             *core.Transaction
-	Emitter        events.EventEmitter
-	Operators      map[string]bool // operator pubkeys; nil or empty → no restrictions
-	MaxTotalSupply uint64          // 0 → unlimited; >0 → hard cap on total minted tokens
+	State           core.State
+	Block           *core.Block
+	Tx              *core.Transaction
+	Emitter         events.EventEmitter
+	Operators       map[string]bool // operator pubkeys; nil or empty → no restrictions
+	MaxTotalSupply  uint64          // 0 → unlimited; >0 → hard cap on total minted tokens
+	EffectiveSender string          // tx.From if direct, tx.OnBehalfOf if delegated
 }
 
 // Executor applies transactions to the state using the global Handler registry.
@@ -123,9 +125,51 @@ func (e *Executor) executeTxLocked(block *core.Block, tx *core.Transaction) erro
 	return nil
 }
 
+// validateDelegation checks that tx.From is permitted to act on behalf of
+// tx.OnBehalfOf, then increments the grant's UsedCount.
+func (e *Executor) validateDelegation(tx *core.Transaction) error {
+	if tx.Type == core.TxGrantDelegation || tx.Type == core.TxRevokeDelegation {
+		return fmt.Errorf("cannot execute %s via delegation", tx.Type)
+	}
+	grant, err := e.state.GetDelegation(tx.OnBehalfOf, tx.From)
+	if err != nil {
+		return fmt.Errorf("grant not found: %w", err)
+	}
+	if grant.ExpiresAt > 0 && time.Now().Unix() > grant.ExpiresAt {
+		_ = e.state.DeleteDelegation(tx.OnBehalfOf, tx.From)
+		return fmt.Errorf("delegation expired")
+	}
+	if grant.MaxUses > 0 && grant.UsedCount >= grant.MaxUses {
+		return fmt.Errorf("delegation max uses exceeded")
+	}
+	allowed := false
+	for _, t := range grant.AllowTypes {
+		if core.TxType(t) == tx.Type {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return fmt.Errorf("tx type %s not allowed by delegation", tx.Type)
+	}
+	grant.UsedCount++
+	if err := e.state.SetDelegation(grant); err != nil {
+		return fmt.Errorf("update delegation grant: %w", err)
+	}
+	return nil
+}
+
 // applyTx deducts the fee, increments the nonce, then dispatches to the handler.
 func (e *Executor) applyTx(block *core.Block, tx *core.Transaction) error {
-	acc, err := e.state.GetAccount(tx.From)
+	effectiveSender := tx.From
+	if tx.OnBehalfOf != "" {
+		if err := e.validateDelegation(tx); err != nil {
+			return fmt.Errorf("delegation: %w", err)
+		}
+		effectiveSender = tx.OnBehalfOf
+	}
+
+	acc, err := e.state.GetAccount(effectiveSender)
 	if err != nil {
 		return fmt.Errorf("get account: %w", err)
 	}
@@ -139,7 +183,7 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction) error {
 	// even though the nonce equality check already passed.
 	// This means the account has exhausted all nonces.
 	if acc.Nonce == math.MaxUint64 {
-		return fmt.Errorf("nonce overflow for account %s: %w", tx.From, core.ErrNonceOverflow)
+		return fmt.Errorf("nonce overflow for account %s: %w", effectiveSender, core.ErrNonceOverflow)
 	}
 	acc.Balance -= tx.Fee
 	acc.Nonce++
@@ -147,7 +191,7 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction) error {
 	// (D) Credit fee to block proposer instead of burning it.
 	// When sender IS the proposer, both adjustments must be applied to the
 	// same in-memory struct to avoid a later SetAccount overwriting the first.
-	if tx.Fee > 0 && block.Header.Proposer != "" && tx.From != block.Header.Proposer {
+	if tx.Fee > 0 && block.Header.Proposer != "" && effectiveSender != block.Header.Proposer {
 		// Different accounts: save sender, then load & credit proposer.
 		if err := e.state.SetAccount(acc); err != nil {
 			return err
@@ -167,7 +211,7 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction) error {
 	} else {
 		// Same account (or fee==0): fee deduction and credit cancel out on
 		// the same struct, so just save the nonce increment.
-		if tx.Fee > 0 && tx.From == block.Header.Proposer {
+		if tx.Fee > 0 && effectiveSender == block.Header.Proposer {
 			acc.Balance += tx.Fee
 		}
 		if err := e.state.SetAccount(acc); err != nil {
@@ -176,12 +220,13 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction) error {
 	}
 
 	ctx := &Context{
-		State:          e.state,
-		Block:          block,
-		Tx:             tx,
-		Emitter:        e.emitter,
-		Operators:      e.operators,
-		MaxTotalSupply: e.maxTotalSupply,
+		State:           e.state,
+		Block:           block,
+		Tx:              tx,
+		Emitter:         e.emitter,
+		Operators:       e.operators,
+		MaxTotalSupply:  e.maxTotalSupply,
+		EffectiveSender: effectiveSender,
 	}
 	return globalRegistry.Execute(tx.Type, ctx, tx.Payload)
 }
