@@ -44,7 +44,7 @@ func handleRandomCommit(ctx *vm.Context, payload json.RawMessage) error {
 
 	rc := &core.RandomCommitment{
 		ID:          p.CommitID,
-		Committer:   ctx.Tx.From,
+		Committer:   ctx.EffectiveSender,
 		CommitHash:  p.CommitHash,
 		BlockHeight: ctx.Block.Header.Height,
 	}
@@ -57,7 +57,7 @@ func handleRandomCommit(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventRandomCommit,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"commit_id": p.CommitID, "committer": ctx.Tx.From},
+			Data:        map[string]any{"commit_id": p.CommitID, "committer": ctx.EffectiveSender},
 		})
 	}
 	return nil
@@ -89,7 +89,7 @@ func handleRandomReveal(ctx *vm.Context, payload json.RawMessage) error {
 	if rc.Revealed {
 		return errors.New("already revealed")
 	}
-	if rc.Committer != ctx.Tx.From {
+	if rc.Committer != ctx.EffectiveSender {
 		return errors.New("only the committer can reveal")
 	}
 

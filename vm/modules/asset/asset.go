@@ -38,7 +38,7 @@ func handleMintAsset(ctx *vm.Context, payload json.RawMessage) error {
 
 	owner := p.Owner
 	if owner == "" {
-		owner = ctx.Tx.From
+		owner = ctx.EffectiveSender
 	} else {
 		// Validate that the provided owner is a real ed25519 pubkey.
 		if err := vm.ValidatePubKey(owner, "owner pubkey"); err != nil {
@@ -87,7 +87,7 @@ func handleBurnAsset(ctx *vm.Context, payload json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("asset %q not found: %w", p.AssetID, err)
 	}
-	if asset.Owner != ctx.Tx.From {
+	if asset.Owner != ctx.EffectiveSender {
 		return errors.New("only the asset owner can burn it")
 	}
 	if asset.ActiveListingID != "" {
@@ -125,7 +125,7 @@ func handleTransferAsset(ctx *vm.Context, payload json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("asset %q not found: %w", p.AssetID, err)
 	}
-	if asset.Owner != ctx.Tx.From {
+	if asset.Owner != ctx.EffectiveSender {
 		return errors.New("only the asset owner can transfer it")
 	}
 	if !asset.Tradeable {
@@ -148,7 +148,7 @@ func handleTransferAsset(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventAssetTransfer,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"asset_id": p.AssetID, "from": ctx.Tx.From, "to": p.To},
+			Data:        map[string]any{"asset_id": p.AssetID, "from": ctx.EffectiveSender, "to": p.To},
 		})
 	}
 	return nil

@@ -59,7 +59,7 @@ func handleSessionOpen(ctx *vm.Context, payload json.RawMessage) error {
 	// "session:<sessionID>" to prove consent — regardless of stakes.
 	consentMsg := []byte("session:" + p.SessionID)
 	for _, player := range p.Players {
-		if player == ctx.Tx.From {
+		if player == ctx.EffectiveSender {
 			continue // the sender implicitly consents by submitting the tx
 		}
 		sig, ok := p.Signatures[player]
@@ -96,7 +96,7 @@ func handleSessionOpen(ctx *vm.Context, payload json.RawMessage) error {
 	sess := &core.Session{
 		ID:        p.SessionID,
 		GameID:    p.GameID,
-		Creator:   ctx.Tx.From, // opener is the only one who can submit the result
+		Creator:   ctx.EffectiveSender, // opener is the only one who can submit the result
 		Players:   p.Players,
 		Stakes:    p.Stakes,
 		Status:    "open",
@@ -137,7 +137,7 @@ func handleSessionResult(ctx *vm.Context, payload json.RawMessage) error {
 		return fmt.Errorf("session %q already closed", p.SessionID)
 	}
 	// Only the session creator (game server / oracle that opened it) can submit results.
-	if ctx.Tx.From != sess.Creator {
+	if ctx.EffectiveSender != sess.Creator {
 		return fmt.Errorf("only the session creator can submit results: %w", core.ErrUnauthorized)
 	}
 
@@ -218,7 +218,7 @@ func handleSessionCancel(ctx *vm.Context, payload json.RawMessage) error {
 	if sess.Status != "open" {
 		return fmt.Errorf("session %q is not open (status=%s)", p.SessionID, sess.Status)
 	}
-	if ctx.Tx.From != sess.Creator {
+	if ctx.EffectiveSender != sess.Creator {
 		return fmt.Errorf("only the session creator can cancel it: %w", core.ErrUnauthorized)
 	}
 

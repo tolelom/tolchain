@@ -20,8 +20,11 @@ func SafeAdd(a, b uint64) (uint64, error) {
 // transaction sender is not among them. When no operators are configured
 // (nil or empty map), all senders are permitted.
 func RequireOperator(ctx *Context) error {
-	if len(ctx.Operators) > 0 && !ctx.Operators[ctx.Tx.From] {
-		return core.ErrUnauthorized
+	if len(ctx.Operators) == 0 {
+		return nil
+	}
+	if !ctx.Operators[ctx.EffectiveSender] {
+		return fmt.Errorf("not an operator: %s: %w", ctx.EffectiveSender, core.ErrUnauthorized)
 	}
 	return nil
 }

@@ -28,14 +28,14 @@ func handleEquipItem(ctx *vm.Context, payload json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("asset %q not found: %w", p.AssetID, err)
 	}
-	if asset.Owner != ctx.Tx.From {
+	if asset.Owner != ctx.EffectiveSender {
 		return errors.New("not the asset owner")
 	}
 	if asset.ActiveListingID != "" {
 		return errors.New("cannot equip a listed asset")
 	}
 
-	inv, err := ctx.State.GetInventory(ctx.Tx.From)
+	inv, err := ctx.State.GetInventory(ctx.EffectiveSender)
 	if err != nil {
 		return fmt.Errorf("get inventory: %w", err)
 	}
@@ -71,7 +71,7 @@ func handleEquipItem(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventItemEquipped,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"asset_id": p.AssetID, "slot": p.Slot, "owner": ctx.Tx.From},
+			Data:        map[string]any{"asset_id": p.AssetID, "slot": p.Slot, "owner": ctx.EffectiveSender},
 		})
 	}
 	return nil
@@ -90,11 +90,11 @@ func handleUnequipItem(ctx *vm.Context, payload json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("asset %q not found: %w", p.AssetID, err)
 	}
-	if asset.Owner != ctx.Tx.From {
+	if asset.Owner != ctx.EffectiveSender {
 		return errors.New("not the asset owner")
 	}
 
-	inv, err := ctx.State.GetInventory(ctx.Tx.From)
+	inv, err := ctx.State.GetInventory(ctx.EffectiveSender)
 	if err != nil {
 		return fmt.Errorf("get inventory: %w", err)
 	}
@@ -126,7 +126,7 @@ func handleUnequipItem(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventItemUnequipped,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"asset_id": p.AssetID, "owner": ctx.Tx.From},
+			Data:        map[string]any{"asset_id": p.AssetID, "owner": ctx.EffectiveSender},
 		})
 	}
 	return nil

@@ -42,7 +42,7 @@ func handleRegisterTemplate(ctx *vm.Context, payload json.RawMessage) error {
 		Name:      p.Name,
 		Schema:    p.Schema,
 		Tradeable: p.Tradeable,
-		Creator:   ctx.Tx.From,
+		Creator:   ctx.EffectiveSender,
 	}
 	if err := ctx.State.SetTemplate(t); err != nil {
 		return err
