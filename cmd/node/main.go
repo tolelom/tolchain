@@ -25,6 +25,7 @@ import (
 
 	// Import VM modules to trigger their init() self-registration.
 	_ "github.com/tolelom/tolchain/vm/modules/asset"
+	_ "github.com/tolelom/tolchain/vm/modules/delegation"
 	_ "github.com/tolelom/tolchain/vm/modules/economy"
 	_ "github.com/tolelom/tolchain/vm/modules/inventory"
 	_ "github.com/tolelom/tolchain/vm/modules/market"
