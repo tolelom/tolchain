@@ -27,6 +27,8 @@ const (
 	EventRewardGranted   EventType = "reward_granted"
 	EventRandomCommit    EventType = "random_commit"
 	EventRandomReveal    EventType = "random_reveal"
+	EventDelegationGranted EventType = "delegation_granted"
+	EventDelegationRevoked EventType = "delegation_revoked"
 )
 
 // Event carries a typed payload emitted after a state change.

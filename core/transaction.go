@@ -29,6 +29,8 @@ const (
 	TxGrantReward      TxType = "grant_reward"
 	TxRandomCommit     TxType = "random_commit"
 	TxRandomReveal     TxType = "random_reveal"
+	TxGrantDelegation  TxType = "grant_delegation"
+	TxRevokeDelegation TxType = "revoke_delegation"
 )
 
 // Transaction is the atomic unit of work on the chain.
@@ -224,4 +226,31 @@ type RandomCommitPayload struct {
 type RandomRevealPayload struct {
 	CommitID string `json:"commit_id"`
 	Secret   string `json:"secret"`
+}
+
+// GrantDelegationPayload is the payload for grant_delegation transactions.
+type GrantDelegationPayload struct {
+	Grantee    string   `json:"grantee"`
+	AllowTypes []string `json:"allow_types"`
+	ExpiresAt  int64    `json:"expires_at"`
+	MaxUses    uint64   `json:"max_uses"`
+	MaxAmount  uint64   `json:"max_amount"`
+}
+
+// RevokeDelegationPayload is the payload for revoke_delegation transactions.
+type RevokeDelegationPayload struct {
+	Grantee string `json:"grantee"`
+}
+
+// DelegationGrant is the state record for an active delegation.
+type DelegationGrant struct {
+	Granter     string   `json:"granter"`
+	Grantee     string   `json:"grantee"`
+	AllowTypes  []string `json:"allow_types"`
+	ExpiresAt   int64    `json:"expires_at"`
+	MaxUses     uint64   `json:"max_uses"`
+	UsedCount   uint64   `json:"used_count"`
+	MaxAmount   uint64   `json:"max_amount"`
+	SpentAmount uint64   `json:"spent_amount"`
+	CreatedAt   int64    `json:"created_at"`
 }
