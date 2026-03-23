@@ -44,7 +44,8 @@ type Transaction struct {
 	Fee       uint64          `json:"fee"`
 	Timestamp int64           `json:"timestamp"`
 	Payload   json.RawMessage `json:"payload"`
-	Signature string          `json:"signature"`
+	Signature  string          `json:"signature"`
+	OnBehalfOf string          `json:"on_behalf_of,omitempty"`
 }
 
 // signingBody holds the fields that are covered by the signature.
@@ -55,20 +56,22 @@ type signingBody struct {
 	Nonce     uint64          `json:"nonce"`
 	Fee       uint64          `json:"fee"`
 	Timestamp int64           `json:"timestamp"`
-	Payload   json.RawMessage `json:"payload"`
+	Payload    json.RawMessage `json:"payload"`
+	OnBehalfOf string          `json:"on_behalf_of,omitempty"`
 }
 
 // Hash returns a deterministic hash of the transaction (sans Signature).
 // Returns an empty string if marshalling fails (which cannot happen in practice).
 func (tx *Transaction) Hash() string {
 	body := signingBody{
-		ChainID:   tx.ChainID,
-		Type:      tx.Type,
-		From:      tx.From,
-		Nonce:     tx.Nonce,
-		Fee:       tx.Fee,
-		Timestamp: tx.Timestamp,
-		Payload:   tx.Payload,
+		ChainID:    tx.ChainID,
+		Type:       tx.Type,
+		From:       tx.From,
+		Nonce:      tx.Nonce,
+		Fee:        tx.Fee,
+		Timestamp:  tx.Timestamp,
+		Payload:    tx.Payload,
+		OnBehalfOf: tx.OnBehalfOf,
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
