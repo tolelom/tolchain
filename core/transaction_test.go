@@ -99,3 +99,21 @@ func TestTransaction_ChainID_DifferentHash(t *testing.T) {
 		t.Fatal("Different ChainIDs should produce different hashes")
 	}
 }
+
+func TestHash_OnBehalfOf_BackwardCompatible(t *testing.T) {
+	tx1, _ := NewTransaction("chain", TxTransfer, "aabb", 0, 0, TransferPayload{To: "ccdd", Amount: 100})
+	tx2, _ := NewTransaction("chain", TxTransfer, "aabb", 0, 0, TransferPayload{To: "ccdd", Amount: 100})
+	tx2.OnBehalfOf = ""
+	if tx1.Hash() != tx2.Hash() {
+		t.Error("empty OnBehalfOf changed the hash")
+	}
+}
+
+func TestHash_OnBehalfOf_ChangesHash(t *testing.T) {
+	tx1, _ := NewTransaction("chain", TxTransfer, "aabb", 0, 0, TransferPayload{To: "ccdd", Amount: 100})
+	tx2, _ := NewTransaction("chain", TxTransfer, "aabb", 0, 0, TransferPayload{To: "ccdd", Amount: 100})
+	tx2.OnBehalfOf = "eeff1122"
+	if tx1.Hash() == tx2.Hash() {
+		t.Error("OnBehalfOf should change the hash")
+	}
+}
