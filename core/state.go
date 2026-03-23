@@ -105,6 +105,8 @@ type State interface {
 	GetDelegation(granter, grantee string) (*DelegationGrant, error)
 	SetDelegation(grant *DelegationGrant) error
 	DeleteDelegation(granter, grantee string) error
+	GetDelegationsByGranter(granter string) ([]*DelegationGrant, error)
+	GetDelegationsByGrantee(grantee string) ([]*DelegationGrant, error)
 
 	// Snapshot / rollback / commit
 	Snapshot() (int, error)
