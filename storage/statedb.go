@@ -34,6 +34,7 @@ var (
 	prefixListing      = registerPrefix("list:")
 	prefixInventory    = registerPrefix("inv:")
 	prefixRandomCommit = registerPrefix("rcom:")
+	prefixDelegation   = registerPrefix("deleg:")
 )
 
 type stateSnapshot struct {
@@ -288,6 +289,40 @@ func (s *StateDB) SetRandomCommitment(rc *core.RandomCommitment) error {
 		return err
 	}
 	s.set(prefixRandomCommit+rc.ID, data)
+	return nil
+}
+
+// ---- Delegation ----
+
+func (s *StateDB) GetDelegation(granter, grantee string) (*core.DelegationGrant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := s.get(prefixDelegation + granter + ":" + grantee)
+	if err != nil {
+		return nil, err
+	}
+	var grant core.DelegationGrant
+	if err := json.Unmarshal(data, &grant); err != nil {
+		return nil, err
+	}
+	return &grant, nil
+}
+
+func (s *StateDB) SetDelegation(grant *core.DelegationGrant) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := json.Marshal(grant)
+	if err != nil {
+		return err
+	}
+	s.set(prefixDelegation+grant.Granter+":"+grant.Grantee, data)
+	return nil
+}
+
+func (s *StateDB) DeleteDelegation(granter, grantee string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.del(prefixDelegation + granter + ":" + grantee)
 	return nil
 }
 
