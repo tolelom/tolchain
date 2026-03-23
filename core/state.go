@@ -101,6 +101,11 @@ type State interface {
 	GetRandomCommitment(id string) (*RandomCommitment, error)
 	SetRandomCommitment(rc *RandomCommitment) error
 
+	// Delegations
+	GetDelegation(granter, grantee string) (*DelegationGrant, error)
+	SetDelegation(grant *DelegationGrant) error
+	DeleteDelegation(granter, grantee string) error
+
 	// Snapshot / rollback / commit
 	Snapshot() (int, error)
 	RevertToSnapshot(id int) error
