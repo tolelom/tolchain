@@ -74,6 +74,13 @@ func (h *Handler) Dispatch(req Request) Response {
 	case "getMempoolSize":
 		return okResponse(req.ID, h.mempool.Size())
 
+	case "getDelegation":
+		return h.getDelegation(req)
+	case "getDelegationsByGranter":
+		return h.getDelegationsByGranter(req)
+	case "getDelegationsByGrantee":
+		return h.getDelegationsByGrantee(req)
+
 	default:
 		return errResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("method %q not found", req.Method))
 	}
@@ -348,4 +355,62 @@ func (h *Handler) getRandomCommitment(req Request) Response {
 		return errResponse(req.ID, CodeInternalError, err.Error())
 	}
 	return okResponse(req.ID, rc)
+}
+
+func (h *Handler) getDelegation(req Request) Response {
+	var params struct {
+		Granter string `json:"granter"`
+		Grantee string `json:"grantee"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	}
+	if params.Granter == "" || params.Grantee == "" {
+		return errResponse(req.ID, CodeInvalidParams, "granter and grantee are required")
+	}
+	h.state.BlockRLock()
+	grant, err := h.state.GetDelegation(params.Granter, params.Grantee)
+	h.state.BlockRUnlock()
+	if err != nil {
+		return errResponse(req.ID, CodeInternalError, err.Error())
+	}
+	return okResponse(req.ID, grant)
+}
+
+func (h *Handler) getDelegationsByGranter(req Request) Response {
+	var params struct {
+		Granter string `json:"granter"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	}
+	if params.Granter == "" {
+		return errResponse(req.ID, CodeInvalidParams, "granter is required")
+	}
+	h.state.BlockRLock()
+	grants, err := h.state.GetDelegationsByGranter(params.Granter)
+	h.state.BlockRUnlock()
+	if err != nil {
+		return errResponse(req.ID, CodeInternalError, err.Error())
+	}
+	return okResponse(req.ID, grants)
+}
+
+func (h *Handler) getDelegationsByGrantee(req Request) Response {
+	var params struct {
+		Grantee string `json:"grantee"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	}
+	if params.Grantee == "" {
+		return errResponse(req.ID, CodeInvalidParams, "grantee is required")
+	}
+	h.state.BlockRLock()
+	grants, err := h.state.GetDelegationsByGrantee(params.Grantee)
+	h.state.BlockRUnlock()
+	if err != nil {
+		return errResponse(req.ID, CodeInternalError, err.Error())
+	}
+	return okResponse(req.ID, grants)
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/tolelom/tolchain/core"
@@ -324,6 +325,93 @@ func (s *StateDB) DeleteDelegation(granter, grantee string) error {
 	defer s.mu.Unlock()
 	s.del(prefixDelegation + granter + ":" + grantee)
 	return nil
+}
+
+func (s *StateDB) GetDelegationsByGranter(granter string) ([]*core.DelegationGrant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	prefix := prefixDelegation + granter + ":"
+	merged := make(map[string][]byte)
+
+	// Scan persisted entries from DB
+	it := s.db.NewIterator([]byte(prefix))
+	for it.Next() {
+		k := string(it.Key())
+		v := make([]byte, len(it.Value()))
+		copy(v, it.Value())
+		merged[k] = v
+	}
+	it.Release()
+	if err := it.Error(); err != nil {
+		return nil, fmt.Errorf("iterator error: %w", err)
+	}
+
+	// Apply in-memory dirty writes
+	for k, v := range s.dirty {
+		if strings.HasPrefix(k, prefix) {
+			merged[k] = v
+		}
+	}
+
+	// Exclude deleted keys
+	for k := range s.deleted {
+		delete(merged, k)
+	}
+
+	grants := make([]*core.DelegationGrant, 0, len(merged))
+	for _, v := range merged {
+		var g core.DelegationGrant
+		if err := json.Unmarshal(v, &g); err != nil {
+			continue
+		}
+		grants = append(grants, &g)
+	}
+	return grants, nil
+}
+
+func (s *StateDB) GetDelegationsByGrantee(grantee string) ([]*core.DelegationGrant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	merged := make(map[string][]byte)
+
+	// Scan ALL delegation entries from DB
+	it := s.db.NewIterator([]byte(prefixDelegation))
+	for it.Next() {
+		k := string(it.Key())
+		v := make([]byte, len(it.Value()))
+		copy(v, it.Value())
+		merged[k] = v
+	}
+	it.Release()
+	if err := it.Error(); err != nil {
+		return nil, fmt.Errorf("iterator error: %w", err)
+	}
+
+	// Apply in-memory dirty writes
+	for k, v := range s.dirty {
+		if strings.HasPrefix(k, prefixDelegation) {
+			merged[k] = v
+		}
+	}
+
+	// Exclude deleted keys
+	for k := range s.deleted {
+		delete(merged, k)
+	}
+
+	grants := make([]*core.DelegationGrant, 0)
+	for _, v := range merged {
+		var g core.DelegationGrant
+		if err := json.Unmarshal(v, &g); err != nil {
+			continue
+		}
+		if g.Grantee == grantee {
+			grants = append(grants, &g)
+		}
+	}
+	return grants, nil
 }
 
 // ---- Block-level read-snapshot isolation ----
