@@ -154,3 +154,33 @@ func (w *Wallet) RandomReveal(chainID, commitID, secret string, nonce, fee uint6
 		Secret:   secret,
 	})
 }
+
+// GrantDelegation creates a signed grant_delegation transaction.
+func (w *Wallet) GrantDelegation(chainID, grantee string, allowTypes []string, expiresAt int64, maxUses, maxAmount, nonce, fee uint64) (*core.Transaction, error) {
+	return w.NewTx(chainID, core.TxGrantDelegation, nonce, fee, core.GrantDelegationPayload{
+		Grantee:    grantee,
+		AllowTypes: allowTypes,
+		ExpiresAt:  expiresAt,
+		MaxUses:    maxUses,
+		MaxAmount:  maxAmount,
+	})
+}
+
+// RevokeDelegation creates a signed revoke_delegation transaction.
+func (w *Wallet) RevokeDelegation(chainID, grantee string, nonce, fee uint64) (*core.Transaction, error) {
+	return w.NewTx(chainID, core.TxRevokeDelegation, nonce, fee, core.RevokeDelegationPayload{
+		Grantee: grantee,
+	})
+}
+
+// NewDelegatedTx creates a signed transaction on behalf of another account (delegation).
+// The wallet signs as grantee, while onBehalfOf specifies the granter's pubkey.
+func (w *Wallet) NewDelegatedTx(chainID string, typ core.TxType, onBehalfOf string, nonce, fee uint64, payload any) (*core.Transaction, error) {
+	tx, err := core.NewTransaction(chainID, typ, w.pub.Hex(), nonce, fee, payload)
+	if err != nil {
+		return nil, err
+	}
+	tx.OnBehalfOf = onBehalfOf
+	tx.Sign(w.priv)
+	return tx, nil
+}
