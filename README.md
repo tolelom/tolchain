@@ -4,7 +4,7 @@ Game-specialized private blockchain written in Go.
 Assets, sessions, markets, inventory, rewards, and verifiable randomness — all on-chain.
 
 [![CI](https://github.com/tolelom/tolchain/actions/workflows/ci.yml/badge.svg)](https://github.com/tolelom/tolchain/actions/workflows/ci.yml)
-![Go 1.24](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go)
+![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)
 
 ---
 
@@ -16,7 +16,7 @@ the chain provides a tamper-proof, auditable record without requiring a full pub
 
 | Component | Technology |
 |-----------|-----------|
-| Language | Go 1.24 |
+| Language | Go 1.25 |
 | Consensus | PoA round-robin |
 | Signature | ed25519 (stdlib) |
 | Hash | SHA-256 (stdlib) |
@@ -32,14 +32,14 @@ the chain provides a tamper-proof, auditable record without requiring a full pub
 
 ## Features
 
-- **16 transaction types** across 7 pluggable VM modules
+- **18 transaction types** across 8 pluggable VM modules
 - **Asset management** — mint, burn, transfer with schema-validated templates
 - **In-game marketplace** — list / buy / cancel with equipped-item blocking
 - **Game sessions** — stake locking, multi-player consent signatures, reward distribution
 - **Inventory** — slot-based equipment with trade/burn protection while equipped
 - **Batch rewards** — atomic token + asset grants (operator-only)
 - **Commit-reveal randomness** — `hash(secret + prevBlockHash)` for fair drops
-- **SSE event streaming** — real-time events with type filtering (19 event types)
+- **SSE event streaming** — real-time events with type filtering (21 event types)
 - **IP-based rate limiting** — token bucket (100 req/s, burst 200) per IP
 - **Prometheus metrics** — 15 custom metrics across consensus, mempool, network, RPC
 - **Snapshot/rollback** — per-tx and per-block state rollback on failure
@@ -206,14 +206,16 @@ Auth: `Authorization: Bearer <token>` (if configured).
 | `grant_reward` | reward | operator | Batch token + asset grant |
 | `random_commit` | random | operator | Submit hash commitment |
 | `random_reveal` | random | operator | Reveal secret, compute result |
+| `grant_delegation` | delegation | owner | Grant operator permission to another key |
+| `revoke_delegation` | delegation | owner | Revoke granted delegation |
 
 ---
 
 ## Event System
 
-19 event types streamed via SSE at `GET /events`:
+21 event types streamed via SSE at `GET /events`:
 
-`block_commit` · `tx_executed` · `token_transfer` · `asset_minted` · `asset_burned` · `asset_transfer` · `template_registered` · `session_open` · `session_close` · `session_cancel` · `market_list` · `market_buy` · `market_cancel` · `item_equipped` · `item_unequipped` · `reward_granted` · `random_commit` · `random_reveal`
+`block_commit` · `tx_executed` · `token_transfer` · `asset_minted` · `asset_burned` · `asset_transfer` · `template_registered` · `session_open` · `session_close` · `session_cancel` · `market_list` · `market_buy` · `market_cancel` · `item_equipped` · `item_unequipped` · `reward_granted` · `random_commit` · `random_reveal` · `delegation_granted` · `delegation_revoked`
 
 Events are buffered during block execution and emitted only after successful commit.
 
@@ -254,7 +256,7 @@ tolchain/
 ├── storage/            # LevelDB wrapper, StateDB with snapshot/rollback
 ├── tests/              # Integration tests & benchmarks
 ├── vm/                 # Transaction executor & handler registry
-│   └── modules/        # asset, economy, inventory, market, random, reward, session
+│   └── modules/        # asset, delegation, economy, inventory, market, random, reward, session
 └── wallet/             # Key generation, AES-GCM keystore, tx builders
 ```
 
