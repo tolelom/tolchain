@@ -137,16 +137,32 @@ func (n *Node) Listener() net.Listener {
 // ReKeyPeer updates a peer's key in the peer map from oldID to newID.
 // It also updates the peer's ID field. This is used when a peer announces
 // its real node_id via MsgHello.
+//
+// If a different peer is already registered under newID (an earlier connection
+// from the same node not yet cleaned up), the old connection is closed and
+// replaced. Without this handling the previous peer would dangle in memory
+// until its readLoop exited on its own.
 func (n *Node) ReKeyPeer(oldID, newID string) {
+	if oldID == newID {
+		return
+	}
 	n.mu.Lock()
-	defer n.mu.Unlock()
 	p, ok := n.peers[oldID]
 	if !ok {
+		n.mu.Unlock()
 		return
 	}
 	delete(n.peers, oldID)
+	// Close any pre-existing peer registered under newID. Peer.Close() is
+	// safe to call inside this lock — it takes its own mutex and is idempotent.
+	if existing, conflict := n.peers[newID]; conflict && existing != p {
+		slog.Warn("ReKeyPeer: replacing existing peer with same node_id",
+			"component", "network", "old_id", oldID, "new_id", newID, "existing_addr", existing.Addr)
+		existing.Close()
+	}
 	p.ID = newID
 	n.peers[newID] = p
+	n.mu.Unlock()
 }
 
 // PeerCount returns the number of currently connected peers.

@@ -25,6 +25,12 @@ func handleTransfer(ctx *vm.Context, payload json.RawMessage) error {
 		return err
 	}
 
+	// Enforce delegation MaxAmount before debiting. No-op for direct tx
+	// (OnBehalfOf == "") and for grants with MaxAmount == 0 (unlimited).
+	if err := vm.ChargeDelegationAmount(ctx, p.Amount); err != nil {
+		return err
+	}
+
 	// The sender account is loaded again here because applyTx already saved it
 	// with the fee deduction and nonce increment. We need the updated state.
 	// This is intentionally a second read from the dirty buffer (O(1) in-memory).

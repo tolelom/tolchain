@@ -39,3 +39,39 @@ func ValidatePubKey(hexStr, fieldName string) error {
 	}
 	return nil
 }
+
+// ChargeDelegationAmount enforces the MaxAmount limit on a delegation grant
+// for tx that move tokens (transfer, grant_reward). Caller passes the amount
+// the tx wants to spend on behalf of the granter; this updates SpentAmount
+// in state and rejects if MaxAmount would be exceeded.
+//
+// No-op when tx is direct (OnBehalfOf == ""), grant has MaxAmount == 0
+// (unlimited), or amount == 0.
+//
+// Must be called from inside a tx handler so failures roll back via the
+// executor's per-tx snapshot.
+func ChargeDelegationAmount(ctx *Context, amount uint64) error {
+	if amount == 0 || ctx.Tx.OnBehalfOf == "" {
+		return nil
+	}
+	grant, err := ctx.State.GetDelegation(ctx.Tx.OnBehalfOf, ctx.Tx.From)
+	if err != nil {
+		return fmt.Errorf("delegation amount check: get grant: %w", err)
+	}
+	if grant.MaxAmount == 0 {
+		return nil
+	}
+	newSpent, err := SafeAdd(grant.SpentAmount, amount)
+	if err != nil {
+		return fmt.Errorf("delegation spent_amount overflow: %w", err)
+	}
+	if newSpent > grant.MaxAmount {
+		return fmt.Errorf("delegation max_amount exceeded: would spend %d, limit %d (already spent %d): %w",
+			amount, grant.MaxAmount, grant.SpentAmount, core.ErrUnauthorized)
+	}
+	grant.SpentAmount = newSpent
+	if err := ctx.State.SetDelegation(grant); err != nil {
+		return fmt.Errorf("delegation amount check: save grant: %w", err)
+	}
+	return nil
+}

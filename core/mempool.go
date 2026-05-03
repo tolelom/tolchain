@@ -92,12 +92,18 @@ func (m *Mempool) Get(id string) (*Transaction, bool) {
 }
 
 // Pending returns up to n pending transactions in insertion order.
+// Expired transactions (timestamp older than maxTxAge) are skipped, so the
+// proposer never picks them. Use EvictExpired() to actually remove them.
 func (m *Mempool) Pending(n int) []*Transaction {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	now := time.Now().UnixNano()
 	result := make([]*Transaction, 0, n)
 	for _, id := range m.ord {
 		if tx, ok := m.txs[id]; ok {
+			if now > tx.Timestamp && now-tx.Timestamp > m.maxTxAge {
+				continue // expired — skip, EvictExpired will clean up
+			}
 			result = append(result, tx)
 			if len(result) >= n {
 				break
@@ -105,6 +111,26 @@ func (m *Mempool) Pending(n int) []*Transaction {
 		}
 	}
 	return result
+}
+
+// EvictExpired removes transactions whose timestamp is older than the
+// configured maxTxAge and returns the number evicted. Call periodically
+// from the consensus loop so the pool does not accumulate dead entries.
+func (m *Mempool) EvictExpired() int {
+	m.mu.RLock()
+	now := time.Now().UnixNano()
+	var expired []string
+	for id, tx := range m.txs {
+		if now > tx.Timestamp && now-tx.Timestamp > m.maxTxAge {
+			expired = append(expired, id)
+		}
+	}
+	m.mu.RUnlock()
+	if len(expired) == 0 {
+		return 0
+	}
+	m.Remove(expired)
+	return len(expired)
 }
 
 // Remove deletes transactions by ID (called after block commit).

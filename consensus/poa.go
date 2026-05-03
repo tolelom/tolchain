@@ -145,6 +145,20 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 	block.Header.StateRoot = p.state.ComputeRoot()
 	block.Sign(p.privKey)
 
+	// Defensive self-validation: run the same checks peers will run before
+	// broadcasting. Catches proposer bugs (wrong index, timestamp drift, hash
+	// mismatch) early instead of letting peers reject the broadcast.
+	if err := p.ValidateBlock(block); err != nil {
+		buf.Discard()
+		if revErr := p.state.RevertToSnapshot(blockSnapID); revErr != nil {
+			slog.Error("FATAL: self-validation failed and snapshot revert failed",
+				"component", "consensus", "height", block.Header.Height, "revert_error", revErr, "validation_error", err)
+			os.Exit(1)
+		}
+		p.state.BlockUnlock()
+		return nil, fmt.Errorf("self-validation: %w", err)
+	}
+
 	if err := p.bc.AddBlock(block); err != nil {
 		// Discard buffered events and rollback all state changes.
 		buf.Discard()
@@ -266,14 +280,26 @@ func (p *PoA) ValidateBlock(block *core.Block) error {
 
 // Run starts the block-production loop with the given interval. It blocks
 // until done is closed.
+//
+// Every Nth tick, expired mempool transactions are evicted regardless of whether
+// this node is the proposer — otherwise non-proposer nodes accumulate dead
+// entries that never get cleaned up by ProduceBlock's per-tx skip.
 func (p *PoA) Run(interval time.Duration, done <-chan struct{}) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	const evictEvery = 30 // ticks between mempool sweeps (≈60s at 2s interval)
+	tick := 0
 	for {
 		select {
 		case <-done:
 			return
 		case <-ticker.C:
+			tick++
+			if tick%evictEvery == 0 && p.mempool != nil {
+				if n := p.mempool.EvictExpired(); n > 0 {
+					slog.Info("mempool expired txs evicted", "component", "consensus", "count", n)
+				}
+			}
 			if p.IsProposer() {
 				if _, err := p.ProduceBlock(); err != nil {
 					slog.Error("produce block error", "component", "consensus", "error", err)
