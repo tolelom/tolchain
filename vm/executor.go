@@ -90,6 +90,12 @@ func (e *Executor) ExecuteTx(block *core.Block, tx *core.Transaction) error {
 
 // executeTxLocked is the internal implementation; caller must hold e.mu.
 func (e *Executor) executeTxLocked(block *core.Block, tx *core.Transaction) error {
+	// Tx ChainID는 서명에 포함되므로 cross-chain replay은 서명 검증으로 막히지만,
+	// 악성 validator가 서명이 유효한 외부 chain의 tx를 자기 블록에 끼워 넣는
+	// 시나리오는 별도. sync로 받은 블록 실행 시 마지막 방어선으로 명시 체크.
+	if tx.ChainID != block.Header.ChainID {
+		return fmt.Errorf("tx chain_id %q does not match block chain_id %q", tx.ChainID, block.Header.ChainID)
+	}
 	if err := tx.Verify(); err != nil {
 		return fmt.Errorf("signature: %w", err)
 	}

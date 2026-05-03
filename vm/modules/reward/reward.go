@@ -39,6 +39,10 @@ func handleGrantReward(ctx *vm.Context, payload json.RawMessage) error {
 
 	// Credit tokens.
 	if p.TokenAmount > 0 {
+		// Enforce delegation MaxAmount on the granter for reward tokens.
+		if err := vm.ChargeDelegationAmount(ctx, p.TokenAmount); err != nil {
+			return err
+		}
 		// Enforce total supply cap if configured.
 		if ctx.MaxTotalSupply > 0 {
 			supply, err := ctx.State.GetAccount("system:total_supply")

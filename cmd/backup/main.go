@@ -130,7 +130,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := os.WriteFile(*output, data, 0644); err != nil {
+	// 0600: backup includes account balances, session records, and other
+	// per-user state — read access is restricted to the running user.
+	if err := os.WriteFile(*output, data, 0600); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to write output: %v\n", err)
 		os.Exit(1)
 	}

@@ -155,6 +155,9 @@ func (c *Config) ApplyDefaults() {
 	if c.Consensus.MaxTimeDriftSec == 0 {
 		c.Consensus.MaxTimeDriftSec = 15
 	}
+	if c.LogLevel == "" {
+		c.LogLevel = DefaultLogLevel
+	}
 }
 
 // DefaultConfig returns a single-node development configuration.
