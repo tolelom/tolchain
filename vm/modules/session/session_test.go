@@ -14,10 +14,15 @@ import (
 	"github.com/tolelom/tolchain/vm"
 )
 
+// testChainID is the chain ID stamped into test blocks; consent signatures
+// must commit to it.
+const testChainID = "test-chain"
+
 func newCtx(t *testing.T, state core.State, fromPubHex string) *vm.Context {
 	t.Helper()
 	emitter := events.NewEmitter()
 	block := &core.Block{Header: core.BlockHeader{
+		ChainID:   testChainID,
 		Height:    1,
 		Timestamp: time.Now().UnixNano(),
 		PrevHash:  "abc123",
@@ -40,8 +45,8 @@ func TestSessionOpen_Success(t *testing.T) {
 	_ = state.SetAccount(&core.Account{Address: pub1Hex, Balance: 1000})
 	_ = state.SetAccount(&core.Account{Address: pub2Hex, Balance: 1000})
 
-	// Player 2 signs consent.
-	consentMsg := []byte("session:s1")
+	// Player 2 signs consent over the canonical v2 message.
+	consentMsg := core.SessionConsentMessage(testChainID, "s1", "game1", 100)
 	sig := crypto.Sign(priv2, consentMsg)
 
 	ctx := newCtx(t, state, pub1Hex)
@@ -156,6 +161,101 @@ func TestSessionOpen_InvalidConsentSignature(t *testing.T) {
 
 	if err := handleSessionOpen(ctx, payload); err == nil {
 		t.Fatal("expected error for invalid consent signature")
+	}
+}
+
+// consentTestSetup funds two players and returns everything needed to build a
+// session_open payload where player 2 must provide a consent signature.
+func consentTestSetup(t *testing.T) (state core.State, priv2 crypto.PrivateKey, pub1Hex, pub2Hex string) {
+	t.Helper()
+	state = testutil.NewStateDB()
+	_, pub1, _ := crypto.GenerateKeyPair()
+	p2, pub2, _ := crypto.GenerateKeyPair()
+	pub1Hex = pub1.Hex()
+	pub2Hex = pub2.Hex()
+	_ = state.SetAccount(&core.Account{Address: pub1Hex, Balance: 1000})
+	_ = state.SetAccount(&core.Account{Address: pub2Hex, Balance: 1000})
+	return state, p2, pub1Hex, pub2Hex
+}
+
+// 구버전 v1 포맷("session:<sessionID>") 서명은 거부되어야 한다.
+// v1은 stakes/chain_id를 커밋하지 않아 금액 변조·크로스체인 리플레이가 가능했다.
+func TestSessionOpen_OldFormatConsentRejected(t *testing.T) {
+	state, priv2, pub1Hex, pub2Hex := consentTestSetup(t)
+
+	sig := crypto.Sign(priv2, []byte("session:s1"))
+
+	ctx := newCtx(t, state, pub1Hex)
+	payload, _ := json.Marshal(core.SessionOpenPayload{
+		SessionID:  "s1",
+		GameID:     "game1",
+		Players:    []string{pub1Hex, pub2Hex},
+		Stakes:     100,
+		Signatures: map[string]string{pub2Hex: sig},
+	})
+
+	if err := handleSessionOpen(ctx, payload); err == nil {
+		t.Fatal("expected old-format (v1) consent signature to be rejected")
+	}
+}
+
+// stakes 100에 동의한 서명을 stakes 200 페이로드에 재사용하면 거부되어야 한다.
+func TestSessionOpen_StakesTamperConsentRejected(t *testing.T) {
+	state, priv2, pub1Hex, pub2Hex := consentTestSetup(t)
+
+	sig := crypto.Sign(priv2, core.SessionConsentMessage(testChainID, "s1", "game1", 100))
+
+	ctx := newCtx(t, state, pub1Hex)
+	payload, _ := json.Marshal(core.SessionOpenPayload{
+		SessionID:  "s1",
+		GameID:     "game1",
+		Players:    []string{pub1Hex, pub2Hex},
+		Stakes:     200, // tampered: consent was for 100
+		Signatures: map[string]string{pub2Hex: sig},
+	})
+
+	if err := handleSessionOpen(ctx, payload); err == nil {
+		t.Fatal("expected consent signed for different stakes to be rejected")
+	}
+}
+
+// 다른 체인을 위해 서명된 동의는 이 체인에서 거부되어야 한다 (크로스체인 리플레이 방지).
+func TestSessionOpen_WrongChainConsentRejected(t *testing.T) {
+	state, priv2, pub1Hex, pub2Hex := consentTestSetup(t)
+
+	sig := crypto.Sign(priv2, core.SessionConsentMessage("other-chain", "s1", "game1", 100))
+
+	ctx := newCtx(t, state, pub1Hex)
+	payload, _ := json.Marshal(core.SessionOpenPayload{
+		SessionID:  "s1",
+		GameID:     "game1",
+		Players:    []string{pub1Hex, pub2Hex},
+		Stakes:     100,
+		Signatures: map[string]string{pub2Hex: sig},
+	})
+
+	if err := handleSessionOpen(ctx, payload); err == nil {
+		t.Fatal("expected consent signed for a different chain to be rejected")
+	}
+}
+
+// 다른 game_id에 대한 동의 재사용도 거부되어야 한다.
+func TestSessionOpen_GameIDTamperConsentRejected(t *testing.T) {
+	state, priv2, pub1Hex, pub2Hex := consentTestSetup(t)
+
+	sig := crypto.Sign(priv2, core.SessionConsentMessage(testChainID, "s1", "game1", 100))
+
+	ctx := newCtx(t, state, pub1Hex)
+	payload, _ := json.Marshal(core.SessionOpenPayload{
+		SessionID:  "s1",
+		GameID:     "game2", // tampered: consent was for game1
+		Players:    []string{pub1Hex, pub2Hex},
+		Stakes:     100,
+		Signatures: map[string]string{pub2Hex: sig},
+	})
+
+	if err := handleSessionOpen(ctx, payload); err == nil {
+		t.Fatal("expected consent signed for a different game to be rejected")
 	}
 }
 

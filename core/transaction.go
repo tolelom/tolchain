@@ -161,8 +161,9 @@ type RegisterTemplatePayload struct {
 }
 
 // SessionOpenPayload opens a new game session and locks stakes.
-// When Stakes > 0, Signatures must contain each player's (except tx.From)
-// ed25519 signature over "session:<SessionID>" to prove consent.
+// Signatures must contain each player's (except the effective sender's)
+// ed25519 signature over the canonical consent message returned by
+// SessionConsentMessage(chainID, SessionID, GameID, Stakes).
 type SessionOpenPayload struct {
 	SessionID  string            `json:"session_id"`
 	GameID     string            `json:"game_id"`

@@ -164,7 +164,7 @@ Rate Limit: 토큰 버킷 100 req/s, 버스트 200 (IP당)
   "max_block_txs": 1000,
   "validators": ["<pubkey_hex>"],
   "operators": ["<address_hex>"],
-  "genesis": { "chain_id": "tolchain-dev", "alloc": {} },
+  "genesis": { "chain_id": "tolchain-dev", "alloc": {}, "timestamp": 1735689600000000000 },
   "seed_peers": ["host:port"],
   "tls": { "ca_cert": "", "node_cert": "", "node_key": "" },
   "rpc_auth_token": "..."

@@ -152,8 +152,11 @@ func main() {
 	}
 
 	// ---- genesis block (if fresh chain) ----
+	// Only built when the DB is empty; existing data dirs keep their stored
+	// genesis untouched. The block is fully deterministic from the config, so
+	// every node with the same config computes the same genesis hash.
 	if bc.Tip() == nil {
-		genesisBlock, err := config.CreateGenesisBlock(cfg, state, privKey)
+		genesisBlock, err := config.CreateGenesisBlock(cfg, state)
 		if err != nil {
 			slog.Error("genesis creation failed", "error", err)
 			os.Exit(1)

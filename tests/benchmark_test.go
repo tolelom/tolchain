@@ -255,7 +255,7 @@ func BenchmarkProduceBlock(b *testing.B) {
 	}
 	cfg.ApplyDefaults()
 
-	genesis, _ := config.CreateGenesisBlock(cfg, state, w.PrivKey())
+	genesis, _ := config.CreateGenesisBlock(cfg, state)
 	bc.AddBlock(genesis)
 
 	emitter := events.NewEmitter()

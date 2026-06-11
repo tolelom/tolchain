@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/tolelom/tolchain/crypto"
 	"github.com/tolelom/tolchain/internal/testutil"
@@ -365,7 +366,7 @@ func TestSaveAndLoad_Roundtrip(t *testing.T) {
 // ---- Genesis ----
 
 func TestCreateGenesisBlock(t *testing.T) {
-	priv, pub, err := crypto.GenerateKeyPair()
+	_, pub, err := crypto.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("GenerateKeyPair: %v", err)
 	}
@@ -378,7 +379,7 @@ func TestCreateGenesisBlock(t *testing.T) {
 
 	state := testutil.NewStateDB()
 
-	block, err := CreateGenesisBlock(cfg, state, priv)
+	block, err := CreateGenesisBlock(cfg, state)
 	if err != nil {
 		t.Fatalf("CreateGenesisBlock: %v", err)
 	}
@@ -388,12 +389,18 @@ func TestCreateGenesisBlock(t *testing.T) {
 		t.Errorf("Height = %d, want 0", block.Header.Height)
 	}
 
-	// Block must be signed
+	// Genesis is deterministic: hashed but unsigned, with no proposer.
 	if block.Hash == "" {
 		t.Error("genesis block Hash is empty")
 	}
-	if block.Signature == "" {
-		t.Error("genesis block Signature is empty")
+	if block.Signature != "" {
+		t.Errorf("genesis block Signature = %q, want empty (deterministic genesis)", block.Signature)
+	}
+	if block.Header.Proposer != "" {
+		t.Errorf("genesis block Proposer = %q, want empty (deterministic genesis)", block.Header.Proposer)
+	}
+	if block.Header.Timestamp != cfg.Genesis.Timestamp {
+		t.Errorf("genesis Timestamp = %d, want config value %d", block.Header.Timestamp, cfg.Genesis.Timestamp)
 	}
 
 	// PrevHash must be the canonical genesis hash
@@ -429,7 +436,7 @@ func TestCreateGenesisBlock_MultipleAlloc(t *testing.T) {
 	}
 
 	state := testutil.NewStateDB()
-	block, err := CreateGenesisBlock(cfg, state, priv)
+	block, err := CreateGenesisBlock(cfg, state)
 	if err != nil {
 		t.Fatalf("CreateGenesisBlock: %v", err)
 	}
@@ -452,6 +459,107 @@ func TestCreateGenesisBlock_MultipleAlloc(t *testing.T) {
 	if acc2.Balance != 300 {
 		t.Errorf("pub2 balance = %d, want 300", acc2.Balance)
 	}
+}
+
+// 같은 config로 독립적인 두 노드(별도 state)가 제네시스를 만들면
+// 해시가 바이트 단위로 동일해야 한다 — 멀티 노드 fresh bootstrap 포크 방지의 핵심.
+func TestCreateGenesisBlock_DeterministicAcrossNodes(t *testing.T) {
+	_, pub1, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
+	}
+	_, pub2, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
+	}
+
+	mkCfg := func() *Config {
+		cfg := DefaultConfig()
+		cfg.Validators = []string{pub1.Hex()}
+		cfg.Genesis.ChainID = "det-chain"
+		cfg.Genesis.Timestamp = 1735689600000000000 // 2025-01-01T00:00:00Z
+		cfg.Genesis.Alloc = map[string]uint64{
+			pub1.Hex(): 1_000_000,
+			pub2.Hex(): 250_000,
+		}
+		return cfg
+	}
+
+	blockA, err := CreateGenesisBlock(mkCfg(), testutil.NewStateDB())
+	if err != nil {
+		t.Fatalf("CreateGenesisBlock A: %v", err)
+	}
+	blockB, err := CreateGenesisBlock(mkCfg(), testutil.NewStateDB())
+	if err != nil {
+		t.Fatalf("CreateGenesisBlock B: %v", err)
+	}
+
+	if blockA.Hash != blockB.Hash {
+		t.Errorf("genesis hash differs across nodes: %s vs %s", blockA.Hash, blockB.Hash)
+	}
+	if blockA.Header != blockB.Header {
+		t.Errorf("genesis header differs across nodes:\nA=%+v\nB=%+v", blockA.Header, blockB.Header)
+	}
+}
+
+// genesis.timestamp가 바뀌면 제네시스 해시도 바뀌어야 한다.
+func TestCreateGenesisBlock_TimestampChangesHash(t *testing.T) {
+	_, pub, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
+	}
+
+	mkCfg := func(ts int64) *Config {
+		cfg := DefaultConfig()
+		cfg.Validators = []string{pub.Hex()}
+		cfg.Genesis.Timestamp = ts
+		cfg.Genesis.Alloc = map[string]uint64{pub.Hex(): 100}
+		return cfg
+	}
+
+	blockA, err := CreateGenesisBlock(mkCfg(1735689600000000000), testutil.NewStateDB())
+	if err != nil {
+		t.Fatalf("CreateGenesisBlock A: %v", err)
+	}
+	blockB, err := CreateGenesisBlock(mkCfg(1735689600000000001), testutil.NewStateDB())
+	if err != nil {
+		t.Fatalf("CreateGenesisBlock B: %v", err)
+	}
+
+	if blockA.Hash == blockB.Hash {
+		t.Error("different genesis timestamps must produce different hashes")
+	}
+}
+
+func TestValidate_GenesisTimestamp(t *testing.T) {
+	t.Run("negative rejected", func(t *testing.T) {
+		cfg := validConfig(t)
+		cfg.Genesis.Timestamp = -1
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for negative genesis timestamp")
+		}
+	})
+	t.Run("far future rejected", func(t *testing.T) {
+		cfg := validConfig(t)
+		cfg.Genesis.Timestamp = time.Now().Add(2 * time.Hour).UnixNano()
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for genesis timestamp >1h in the future")
+		}
+	})
+	t.Run("past value accepted", func(t *testing.T) {
+		cfg := validConfig(t)
+		cfg.Genesis.Timestamp = 1735689600000000000
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("zero accepted", func(t *testing.T) {
+		cfg := validConfig(t)
+		cfg.Genesis.Timestamp = 0
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
 }
 
 func TestIsGenesisHash(t *testing.T) {

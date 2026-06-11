@@ -42,7 +42,7 @@ func setupPoA(t *testing.T) (*PoA, *core.Blockchain, *wallet.Wallet) {
 		},
 	}
 
-	genesis, err := config.CreateGenesisBlock(cfg, state, w.PrivKey())
+	genesis, err := config.CreateGenesisBlock(cfg, state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestIsProposer_MultipleValidatorsRoundRobin(t *testing.T) {
 		},
 	}
 
-	genesis, _ := config.CreateGenesisBlock(cfg, state, w1.PrivKey())
+	genesis, _ := config.CreateGenesisBlock(cfg, state)
 	_ = bc.AddBlock(genesis)
 
 	emitter := events.NewEmitter()
@@ -163,7 +163,7 @@ func TestProduceBlock_NotProposer(t *testing.T) {
 		},
 	}
 
-	genesis, _ := config.CreateGenesisBlock(cfg, state, w1.PrivKey())
+	genesis, _ := config.CreateGenesisBlock(cfg, state)
 	_ = bc.AddBlock(genesis)
 
 	emitter := events.NewEmitter()
@@ -242,7 +242,7 @@ func TestValidateBlock_WrongProposer(t *testing.T) {
 		},
 	}
 
-	genesis, _ := config.CreateGenesisBlock(cfg, state, w1.PrivKey())
+	genesis, _ := config.CreateGenesisBlock(cfg, state)
 	_ = bc.AddBlock(genesis)
 
 	emitter := events.NewEmitter()

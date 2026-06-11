@@ -124,7 +124,7 @@ func startTestNode(t *testing.T, w *wallet.Wallet) (rpcURL string, cleanup func(
 	cfg.ApplyDefaults()
 
 	// Genesis
-	genesis, err := config.CreateGenesisBlock(cfg, stateDB, w.PrivKey())
+	genesis, err := config.CreateGenesisBlock(cfg, stateDB)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,8 +373,9 @@ func TestGameIntegration(t *testing.T) {
 	// 6. Session: 게임 세션 (스테이킹 대전)
 	// ============================================
 	t.Run("6_Session", func(t *testing.T) {
-		// Players sign consent for the session.
-		consentMsg := []byte("session:match-001")
+		// Players sign the canonical v2 consent message (commits to chain,
+		// session, game and stakes).
+		consentMsg := core.SessionConsentMessage(testChainID, "match-001", "pvp-arena", 10_000)
 		p1Sig := crypto.Sign(player1.PrivKey(), consentMsg)
 		p2Sig := crypto.Sign(player2.PrivKey(), consentMsg)
 
