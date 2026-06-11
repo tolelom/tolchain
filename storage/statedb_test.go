@@ -173,8 +173,14 @@ func TestStateDB_ComputeRoot_Deterministic(t *testing.T) {
 	s.SetAccount(&core.Account{Address: "a", Balance: 100})
 	s.SetAccount(&core.Account{Address: "b", Balance: 200})
 
-	r1 := s.ComputeRoot()
-	r2 := s.ComputeRoot()
+	r1, err := s.ComputeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := s.ComputeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if r1 != r2 {
 		t.Fatal("ComputeRoot should be deterministic")
 	}
@@ -183,10 +189,16 @@ func TestStateDB_ComputeRoot_Deterministic(t *testing.T) {
 func TestStateDB_ComputeRoot_ChangesOnMutation(t *testing.T) {
 	s := newTestState()
 	s.SetAccount(&core.Account{Address: "a", Balance: 100})
-	r1 := s.ComputeRoot()
+	r1, err := s.ComputeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	s.SetAccount(&core.Account{Address: "a", Balance: 200})
-	r2 := s.ComputeRoot()
+	r2, err := s.ComputeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if r1 == r2 {
 		t.Fatal("ComputeRoot should change after mutation")
@@ -200,8 +212,14 @@ func TestComputeRoot_DifferentStatesDifferentRoots(t *testing.T) {
 	_ = state1.SetAccount(&core.Account{Address: "alice", Balance: 100})
 	_ = state2.SetAccount(&core.Account{Address: "alice", Balance: 200})
 
-	root1 := state1.ComputeRoot()
-	root2 := state2.ComputeRoot()
+	root1, err := state1.ComputeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root2, err := state2.ComputeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if root1 == root2 {
 		t.Error("different balances should produce different roots")

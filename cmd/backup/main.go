@@ -17,6 +17,7 @@ import (
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
+	"github.com/tolelom/tolchain/storage"
 )
 
 // stateEntry is a single key-value pair in the exported state.
@@ -36,15 +37,8 @@ type backup struct {
 }
 
 // statePrefixes are the key prefixes used by StateDB for world state.
-var statePrefixes = []string{
-	"acct:",
-	"asset:",
-	"tmpl:",
-	"sess:",
-	"list:",
-	"inv:",
-	"rcom:",
-}
+// Sourced from the storage package so new prefixes are never silently missed.
+var statePrefixes = storage.StatePrefixes()
 
 func main() {
 	dataDir := flag.String("data-dir", "./data/chain", "LevelDB data directory")
@@ -118,11 +112,8 @@ func main() {
 	}
 
 	b.Blocks = countPrefix("block:")
-	// Count all index prefixes (idx:, txr:, etc.)
-	indexPrefixes := []string{"idx:", "txr:"}
-	for _, p := range indexPrefixes {
-		b.Indexes += countPrefix(p)
-	}
+	// Count index entries (the indexer writes under "idx:").
+	b.Indexes = countPrefix("idx:")
 
 	data, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {

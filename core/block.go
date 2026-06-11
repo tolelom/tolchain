@@ -33,7 +33,7 @@ type Block struct {
 }
 
 // ComputeHash returns the SHA-256 hash of the serialised header.
-// Returns an empty string if marshalling fails (which cannot happen in practice).
+// Panics if marshalling fails (which cannot happen in practice).
 func (b *Block) ComputeHash() string {
 	data, err := json.Marshal(b.Header)
 	if err != nil {

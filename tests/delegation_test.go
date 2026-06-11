@@ -241,6 +241,48 @@ func TestDelegation_E2E_Expiry(t *testing.T) {
 	}
 }
 
+// TestDelegation_ExpiryDeterministic verifies that delegation expiry is
+// evaluated against the executing block's timestamp, not the local wall clock.
+// A grant already expired in wall-clock time must still be usable inside a
+// block whose timestamp predates the expiry — otherwise replay/sync of old
+// blocks is non-deterministic across nodes.
+func TestDelegation_ExpiryDeterministic(t *testing.T) {
+	state, exec, granter, grantee := setupDelegationTest(t)
+	receiver, _ := wallet.Generate()
+
+	expiresAt := time.Now().Unix() - 3600 // expired 1h ago in wall-clock time
+
+	// Install the grant directly in state, as if granted in an old block.
+	if err := state.SetDelegation(&core.DelegationGrant{
+		Granter:    granter.PubKey(),
+		Grantee:    grantee.PubKey(),
+		AllowTypes: []string{"transfer"},
+		ExpiresAt:  expiresAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := grantee.NewDelegatedTx(
+		delegationChainID,
+		core.TxTransfer,
+		granter.PubKey(),
+		0,
+		0,
+		core.TransferPayload{To: receiver.PubKey(), Amount: 100},
+	)
+	if err != nil {
+		t.Fatalf("NewDelegatedTx: %v", err)
+	}
+
+	// Block timestamped 1h BEFORE the expiry: at block time the grant is valid.
+	block := core.NewBlock(delegationChainID, 2, "0000", granter.PubKey(), []*core.Transaction{tx})
+	block.Header.Timestamp = (expiresAt - 3600) * int64(time.Second)
+
+	if err := exec.ExecuteTx(block, tx); err != nil {
+		t.Fatalf("delegated tx must succeed at block time before expiry (wall clock must not matter), got: %v", err)
+	}
+}
+
 // TestDelegation_E2E_TypeNotAllowed verifies that a grantee cannot use a type outside allow_types.
 func TestDelegation_E2E_TypeNotAllowed(t *testing.T) {
 	_, exec, granter, grantee := setupDelegationTest(t)

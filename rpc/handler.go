@@ -91,8 +91,11 @@ func (h *Handler) getBlock(req Request) Response {
 		Hash   string `json:"hash"`
 		Height *int64 `json:"height"`
 	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errResponse(req.ID, CodeInvalidParams, "params: "+err.Error())
+	// Allow a paramless call to fall back to the chain tip.
+	if req.Params != nil {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return errResponse(req.ID, CodeInvalidParams, "params: "+err.Error())
+		}
 	}
 
 	var block *core.Block

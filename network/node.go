@@ -105,6 +105,11 @@ func (n *Node) AddPeer(id, addr string) error {
 		return err
 	}
 	n.mu.Lock()
+	// Close any previous connection registered under the same ID so it does
+	// not dangle: its readLoop will exit and (identity-checked) clean up.
+	if old, exists := n.peers[id]; exists && old != peer {
+		old.Close()
+	}
 	n.peers[id] = peer
 	n.mu.Unlock()
 	metrics.PeersConnected.Inc()
@@ -251,7 +256,13 @@ func (n *Node) readLoop(peer *Peer) {
 		}
 		peer.Close()
 		n.mu.Lock()
-		delete(n.peers, peer.ID)
+		// Only delete the map entry if it still points at THIS peer. After a
+		// ReKeyPeer collision the key may now hold a live re-keyed peer, and
+		// deleting it would create a ghost peer that no longer receives
+		// broadcasts.
+		if n.peers[peer.ID] == peer {
+			delete(n.peers, peer.ID)
+		}
 		n.mu.Unlock()
 		metrics.PeersConnected.Dec()
 	}()
@@ -268,7 +279,7 @@ func (n *Node) readLoop(peer *Peer) {
 		// Per-peer rate limiting: max 100 messages per second.
 		msgCount++
 		if time.Since(lastReset) >= time.Second {
-			msgCount = 0
+			msgCount = 1 // the message just received counts toward the new window
 			lastReset = time.Now()
 		} else if msgCount > 100 {
 			slog.Warn("peer rate limit exceeded, disconnecting", "component", "network", "peer", peer.ID, "msgs_per_sec", msgCount)

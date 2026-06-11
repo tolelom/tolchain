@@ -163,6 +163,98 @@ func TestValidateBlock_FutureTimestamp(t *testing.T) {
 	}
 }
 
+// TestProduceBlock_TimestampDeterministicReplay is a regression test for the
+// double core.NewBlock timestamp bug: handlers store the executing block's
+// timestamp into state (e.g. DelegationGrant.CreatedAt, Asset.MintedAt), so
+// re-executing the broadcast block from scratch on a fresh node must reproduce
+// the exact StateRoot recorded in the header. If the broadcast header carries
+// a different timestamp than the one used during execution, syncing nodes hit
+// a StateRoot mismatch and sync halts forever.
+func TestProduceBlock_TimestampDeterministicReplay(t *testing.T) {
+	w, err := wallet.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	grantee, err := wallet.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		NodeID:      "test",
+		MaxBlockTxs: 500,
+		Validators:  []string{w.PubKey()},
+		Genesis: config.GenesisConfig{
+			ChainID: testChainID,
+			Alloc:   map[string]uint64{w.PubKey(): 1_000_000},
+		},
+	}
+	cfg.ApplyDefaults()
+
+	// --- producer node ---
+	stateA := storage.NewStateDB(testutil.NewMemDB())
+	bcA := core.NewBlockchain(testutil.NewMemBlockStore())
+	if err := bcA.Init(); err != nil {
+		t.Fatal(err)
+	}
+	genesisA, err := config.CreateGenesisBlock(cfg, stateA, w.PrivKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bcA.AddBlock(genesisA); err != nil {
+		t.Fatal(err)
+	}
+
+	mempool := core.NewMempool(cfg.Mempool.MaxSize, cfg.Mempool.MaxTxAgeSec, cfg.Mempool.MaxFutureSec)
+	execA := vm.NewExecutor(stateA, events.NewEmitter())
+	poa := consensus.New(cfg, bcA, stateA, mempool, execA, events.NewEmitter(), w.PrivKey())
+
+	// --- fresh syncing node, fed the broadcast blocks ---
+	stateB := storage.NewStateDB(testutil.NewMemDB())
+	if _, err := config.CreateGenesisBlock(cfg, stateB, w.PrivKey()); err != nil {
+		t.Fatal(err)
+	}
+	execB := vm.NewExecutor(stateB, events.NewEmitter())
+
+	// Produce many blocks: the bug only manifests when the two time.Now()
+	// calls inside ProduceBlock land on different clock ticks, so a single
+	// block can pass by luck on coarse-resolution clocks.
+	const rounds = 300
+	for i := 0; i < rounds; i++ {
+		// grant_delegation stores ctx.Block.Header.Timestamp (CreatedAt) in state.
+		grantTx, err := w.GrantDelegation(testChainID, grantee.PubKey(), []string{"transfer"}, 0, 0, 0, uint64(i), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := mempool.Add(grantTx); err != nil {
+			t.Fatal(err)
+		}
+
+		block, err := poa.ProduceBlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(block.Transactions) != 1 {
+			t.Fatalf("round %d: expected 1 tx in block, got %d", i, len(block.Transactions))
+		}
+
+		// Re-execute the broadcast block on the fresh node, like sync does.
+		if err := execB.ExecuteBlock(block); err != nil {
+			t.Fatalf("round %d: re-execute broadcast block: %v", i, err)
+		}
+		replayRoot, err := stateB.ComputeRoot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if replayRoot != block.Header.StateRoot {
+			t.Fatalf("round %d: replayed StateRoot %s != header StateRoot %s (block timestamp not deterministic)", i, replayRoot, block.Header.StateRoot)
+		}
+		if err := stateB.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestProduceBlock(t *testing.T) {
 	poa, bc, _ := newTestPoA(t)
 

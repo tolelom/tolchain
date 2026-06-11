@@ -171,7 +171,17 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 
 		// (A) Verify state root matches after execution.
 		if s.exec != nil && s.state != nil {
-			computedRoot := s.state.ComputeRoot()
+			computedRoot, rootErr := s.state.ComputeRoot()
+			if rootErr != nil {
+				buf.Discard()
+				if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
+					slog.Error("FATAL: revert failed after state root error", "component", "sync", "height", b.Header.Height, "revert_error", revErr, "root_error", rootErr)
+					os.Exit(1)
+				}
+				s.state.BlockUnlock()
+				slog.Error("state root computation failed", "component", "sync", "height", b.Header.Height, "error", rootErr)
+				return
+			}
 			if b.Header.StateRoot != "" && computedRoot != b.Header.StateRoot {
 				buf.Discard()
 				if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
@@ -290,7 +300,17 @@ func (s *Syncer) handleBlock(_ *Peer, msg Message) {
 
 	// Verify state root matches after execution.
 	if s.exec != nil && s.state != nil {
-		computedRoot := s.state.ComputeRoot()
+		computedRoot, rootErr := s.state.ComputeRoot()
+		if rootErr != nil {
+			buf.Discard()
+			if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
+				slog.Error("FATAL: revert failed after state root error", "component", "sync", "height", b.Header.Height, "revert_error", revErr, "root_error", rootErr)
+				os.Exit(1)
+			}
+			s.state.BlockUnlock()
+			slog.Error("state root computation failed", "component", "sync", "height", b.Header.Height, "error", rootErr)
+			return
+		}
 		if b.Header.StateRoot != "" && computedRoot != b.Header.StateRoot {
 			buf.Discard()
 			if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/tolelom/tolchain/events"
 )
@@ -37,15 +38,7 @@ func NewSSEBroker(emitter *events.Emitter, authToken string, sseBufferSize int) 
 		authToken:    authToken,
 		eventBufSize: sseBufferSize,
 	}
-	allTypes := []events.EventType{
-		events.EventBlockCommit, events.EventTxExecuted, events.EventTokenTransfer,
-		events.EventAssetMinted, events.EventAssetBurned, events.EventAssetTransfer,
-		events.EventTemplateReg, events.EventSessionOpen, events.EventSessionClose,
-		events.EventMarketList, events.EventMarketBuy, events.EventMarketCancel,
-		events.EventSessionCancel, events.EventItemEquipped, events.EventItemUnequipped,
-		events.EventRewardGranted, events.EventRandomCommit, events.EventRandomReveal,
-	}
-	for _, t := range allTypes {
+	for _, t := range events.AllEventTypes() {
 		typ := t
 		emitter.Subscribe(typ, func(ev events.Event) {
 			b.broadcast(ev)
@@ -76,6 +69,13 @@ func (b *SSEBroker) broadcast(ev events.Event) {
 // a reverse proxy (e.g. nginx, Caddy) that enforces its own connection-level
 // rate limiting and max-connection policies.
 func (b *SSEBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// SSE connections are long-lived; clear the http.Server WriteTimeout for
+	// this response or the server kills the stream after the timeout elapses.
+	// The error is ignored: recorders/proxies that do not support deadlines
+	// simply keep their default behaviour.
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+
 	if b.authToken != "" {
 		got := r.Header.Get("Authorization")
 		expected := "Bearer " + b.authToken

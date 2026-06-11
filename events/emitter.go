@@ -31,6 +31,34 @@ const (
 	EventDelegationRevoked EventType = "delegation_revoked"
 )
 
+// AllEventTypes returns every event type defined by this package. Keep this
+// list in sync with the constants above; consumers that need to subscribe to
+// everything (e.g. the SSE broker) must use this instead of their own list.
+func AllEventTypes() []EventType {
+	return []EventType{
+		EventBlockCommit,
+		EventTxExecuted,
+		EventTokenTransfer,
+		EventAssetMinted,
+		EventAssetBurned,
+		EventAssetTransfer,
+		EventTemplateReg,
+		EventSessionOpen,
+		EventSessionClose,
+		EventMarketList,
+		EventMarketBuy,
+		EventMarketCancel,
+		EventSessionCancel,
+		EventItemEquipped,
+		EventItemUnequipped,
+		EventRewardGranted,
+		EventRandomCommit,
+		EventRandomReveal,
+		EventDelegationGranted,
+		EventDelegationRevoked,
+	}
+}
+
 // Event carries a typed payload emitted after a state change.
 type Event struct {
 	Type        EventType      `json:"type"`

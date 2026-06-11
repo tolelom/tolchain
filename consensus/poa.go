@@ -83,6 +83,12 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 	}
 	candidates := p.mempool.Pending(limit)
 
+	// Acquire the block-execution write lock so that RPC queries (which hold
+	// the read lock) cannot observe partially-applied state.
+	p.state.BlockLock()
+
+	// Read the tip only after acquiring the lock so the produced block cannot
+	// be based on a stale tip (e.g. a block accepted by sync in between).
 	tip := p.bc.Tip()
 	var prevHash string
 	var nextHeight int64
@@ -96,10 +102,6 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 		prevHash = tip.Hash
 		nextHeight = tip.Header.Height + 1
 	}
-
-	// Acquire the block-execution write lock so that RPC queries (which hold
-	// the read lock) cannot observe partially-applied state.
-	p.state.BlockLock()
 
 	// Take a block-level snapshot so we can rollback all state changes if
 	// AddBlock fails later.
@@ -132,17 +134,29 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 	// Restore the real emitter.
 	p.exec.SetEmitter(p.emitter)
 
-	// Remove failed transactions from the mempool immediately.
-	if len(failedIDs) > 0 {
-		p.mempool.Remove(failedIDs)
-	}
-
-	// Rebuild the final block with only successful transactions.
-	block := core.NewBlock(p.cfg.Genesis.ChainID, nextHeight, prevHash, p.pubKey.Hex(), successTxs)
+	// Reuse tmpBlock as the final block so the broadcast header carries the
+	// exact timestamp the handlers observed during execution (handlers store
+	// it into state, e.g. Asset.MintedAt). Creating a second block here would
+	// stamp a fresh time.Now() and make syncing nodes compute a different
+	// StateRoot when they re-execute the block.
+	block := tmpBlock
+	block.Transactions = successTxs
+	block.Header.TxRoot = core.ComputeTxRoot(successTxs)
 
 	// Compute root from the write buffer BEFORE flushing so that if AddBlock
 	// fails the state has not yet been persisted and the node stays consistent.
-	block.Header.StateRoot = p.state.ComputeRoot()
+	stateRoot, err := p.state.ComputeRoot()
+	if err != nil {
+		buf.Discard()
+		if revErr := p.state.RevertToSnapshot(blockSnapID); revErr != nil {
+			slog.Error("FATAL: state root computation failed and snapshot revert failed",
+				"component", "consensus", "height", block.Header.Height, "revert_error", revErr, "root_error", err)
+			os.Exit(1)
+		}
+		p.state.BlockUnlock()
+		return nil, fmt.Errorf("compute state root: %w", err)
+	}
+	block.Header.StateRoot = stateRoot
 	block.Sign(p.privKey)
 
 	// Defensive self-validation: run the same checks peers will run before
@@ -194,6 +208,13 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 		txIDs[i] = tx.ID
 	}
 	p.mempool.Remove(txIDs)
+
+	// Remove failed transactions only after the block is committed. Removing
+	// them earlier would permanently drop txs that failed solely because block
+	// production was aborted (stale tip, AddBlock failure, ...).
+	if len(failedIDs) > 0 {
+		p.mempool.Remove(failedIDs)
+	}
 
 	metrics.BlocksProduced.Inc()
 	metrics.BlockHeight.Set(float64(block.Header.Height))

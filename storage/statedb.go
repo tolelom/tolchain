@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -37,6 +36,15 @@ var (
 	prefixRandomCommit = registerPrefix("rcom:")
 	prefixDelegation   = registerPrefix("deleg:")
 )
+
+// StatePrefixes returns a copy of the canonical state-key prefixes used by
+// StateDB. External tools (e.g. cmd/backup) must use this instead of keeping
+// their own list, so that new prefixes are never silently missed.
+func StatePrefixes() []string {
+	out := make([]string, len(statePrefixes))
+	copy(out, statePrefixes)
+	return out
+}
 
 type stateSnapshot struct {
 	dirty   map[string][]byte
@@ -491,7 +499,7 @@ func (s *StateDB) RevertToSnapshot(id int) error {
 // large states (millions of accounts/assets), this will become a bottleneck.
 // A Merkle-trie or incremental hashing structure would reduce this to O(log N)
 // per block, but is deferred until performance profiling warrants it.
-func (s *StateDB) ComputeRoot() string {
+func (s *StateDB) ComputeRoot() (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Step 1: collect all persisted state entries from DB.
@@ -506,7 +514,9 @@ func (s *StateDB) ComputeRoot() string {
 		}
 		it.Release()
 		if err := it.Error(); err != nil {
-			slog.Error("iterator error in ComputeRoot", "prefix", string(prefix), "error", err)
+			// A failed iteration means the root would be computed from
+			// partial state — callers must abort block production/acceptance.
+			return "", fmt.Errorf("iterator error in ComputeRoot (prefix %q): %w", prefix, err)
 		}
 	}
 
@@ -540,7 +550,7 @@ func (s *StateDB) ComputeRoot() string {
 		buf.Write(lenBuf[:])
 		buf.Write(v)
 	}
-	return crypto.Hash(buf.Bytes())
+	return crypto.Hash(buf.Bytes()), nil
 }
 
 // Commit atomically flushes the write buffer to the underlying DB via a

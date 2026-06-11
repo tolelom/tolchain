@@ -49,7 +49,10 @@ func CreateGenesisBlock(cfg *Config, state core.State, proposerPriv crypto.Priva
 		}
 	}
 
-	stateRoot := state.ComputeRoot()
+	stateRoot, err := state.ComputeRoot()
+	if err != nil {
+		return nil, fmt.Errorf("compute genesis state root: %w", err)
+	}
 	if err := state.Commit(); err != nil {
 		return nil, err
 	}

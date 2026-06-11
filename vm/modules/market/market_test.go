@@ -224,6 +224,73 @@ func TestBuyMarket_InsufficientBalance(t *testing.T) {
 	}
 }
 
+// TestBuyMarket_DelegatedExceedsMaxAmount is a regression test: a delegated
+// buy_market must enforce the delegation grant's MaxAmount limit, the same way
+// transfer and grant_reward do via vm.ChargeDelegationAmount.
+func TestBuyMarket_DelegatedExceedsMaxAmount(t *testing.T) {
+	state := testutil.NewStateDB()
+	_, sellerPub, _ := crypto.GenerateKeyPair()
+	_, granterPub, _ := crypto.GenerateKeyPair() // buyer (on whose behalf)
+	_, granteePub, _ := crypto.GenerateKeyPair() // delegated sender
+	sellerHex := sellerPub.Hex()
+	granterHex := granterPub.Hex()
+	granteeHex := granteePub.Hex()
+
+	_ = state.SetAsset(&core.Asset{ID: "a1", Owner: sellerHex, Tradeable: true, ActiveListingID: "l1", Properties: map[string]any{}})
+	_ = state.SetListing(&core.MarketListing{ID: "l1", AssetID: "a1", Seller: sellerHex, Price: 200, Active: true})
+	_ = state.SetAccount(&core.Account{Address: granterHex, Balance: 500})
+	_ = state.SetDelegation(&core.DelegationGrant{
+		Granter:    granterHex,
+		Grantee:    granteeHex,
+		AllowTypes: []string{string(core.TxBuyMarket)},
+		MaxAmount:  50, // below the listing price
+	})
+
+	ctx := newCtx(t, state, granterHex)
+	ctx.Tx = &core.Transaction{ID: "tx1", From: granteeHex, OnBehalfOf: granterHex, Type: core.TxBuyMarket}
+	payload, _ := json.Marshal(core.BuyMarketPayload{ListingID: "l1"})
+
+	if err := handleBuyMarket(ctx, payload); err == nil {
+		t.Fatal("expected error: delegated buy exceeds delegation MaxAmount")
+	}
+}
+
+func TestBuyMarket_DelegatedChargesSpentAmount(t *testing.T) {
+	state := testutil.NewStateDB()
+	_, sellerPub, _ := crypto.GenerateKeyPair()
+	_, granterPub, _ := crypto.GenerateKeyPair()
+	_, granteePub, _ := crypto.GenerateKeyPair()
+	sellerHex := sellerPub.Hex()
+	granterHex := granterPub.Hex()
+	granteeHex := granteePub.Hex()
+
+	_ = state.SetAsset(&core.Asset{ID: "a1", Owner: sellerHex, Tradeable: true, ActiveListingID: "l1", Properties: map[string]any{}})
+	_ = state.SetListing(&core.MarketListing{ID: "l1", AssetID: "a1", Seller: sellerHex, Price: 200, Active: true})
+	_ = state.SetAccount(&core.Account{Address: granterHex, Balance: 500})
+	_ = state.SetDelegation(&core.DelegationGrant{
+		Granter:    granterHex,
+		Grantee:    granteeHex,
+		AllowTypes: []string{string(core.TxBuyMarket)},
+		MaxAmount:  500,
+	})
+
+	ctx := newCtx(t, state, granterHex)
+	ctx.Tx = &core.Transaction{ID: "tx1", From: granteeHex, OnBehalfOf: granterHex, Type: core.TxBuyMarket}
+	payload, _ := json.Marshal(core.BuyMarketPayload{ListingID: "l1"})
+
+	if err := handleBuyMarket(ctx, payload); err != nil {
+		t.Fatalf("delegated buy within MaxAmount should succeed: %v", err)
+	}
+
+	grant, err := state.GetDelegation(granterHex, granteeHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant.SpentAmount != 200 {
+		t.Errorf("grant.SpentAmount = %d, want 200", grant.SpentAmount)
+	}
+}
+
 // ---------- Cancel Listing Tests ----------
 
 func TestCancelListing_Success(t *testing.T) {

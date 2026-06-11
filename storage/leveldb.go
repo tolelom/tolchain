@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"log/slog"
 
@@ -124,13 +125,17 @@ func (s *LevelBlockStore) GetBlockByHeight(height int64) (*core.Block, error) {
 }
 
 // GetBlockRange returns up to limit blocks starting from fromHeight.
-// It iterates height keys sequentially for better cache locality.
+// It looks up each height key sequentially and stops at the first missing
+// height (end of chain). Any other storage error is returned to the caller.
 func (s *LevelBlockStore) GetBlockRange(fromHeight int64, limit int) ([]*core.Block, error) {
 	blocks := make([]*core.Block, 0, limit)
 	for h := fromHeight; h < fromHeight+int64(limit); h++ {
 		b, err := s.GetBlockByHeight(h)
 		if err != nil {
-			break // no more blocks at this height
+			if stderrors.Is(err, core.ErrNotFound) {
+				break // no more blocks at this height
+			}
+			return nil, fmt.Errorf("get block at height %d: %w", h, err)
 		}
 		blocks = append(blocks, b)
 	}

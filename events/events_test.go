@@ -137,3 +137,28 @@ func TestBuffer_FlushClearsBuffer(t *testing.T) {
 		t.Fatal("Flush should clear buffer after delivery")
 	}
 }
+
+// TestAllEventTypes_CompleteAndUnique guards against new event types being
+// forgotten in AllEventTypes (the SSE broker subscribes from this list).
+func TestAllEventTypes_CompleteAndUnique(t *testing.T) {
+	all := AllEventTypes()
+
+	const wantCount = 20
+	if len(all) != wantCount {
+		t.Errorf("AllEventTypes() has %d entries, want %d — update it when adding event types", len(all), wantCount)
+	}
+
+	seen := make(map[EventType]bool, len(all))
+	for _, typ := range all {
+		if seen[typ] {
+			t.Errorf("duplicate event type %q", typ)
+		}
+		seen[typ] = true
+	}
+
+	for _, required := range []EventType{EventDelegationGranted, EventDelegationRevoked} {
+		if !seen[required] {
+			t.Errorf("AllEventTypes() missing %q", required)
+		}
+	}
+}
