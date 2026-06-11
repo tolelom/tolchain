@@ -49,7 +49,11 @@ func handleGrantReward(ctx *vm.Context, payload json.RawMessage) error {
 			if err != nil {
 				return fmt.Errorf("get total supply: %w", err)
 			}
-			if supply.Balance > ctx.MaxTotalSupply-p.TokenAmount || supply.Balance+p.TokenAmount > ctx.MaxTotalSupply {
+			// Overflow-safe cap check: reject if the amount alone exceeds the
+			// cap (would underflow the subtraction below) or if the remaining
+			// headroom is too small. Never computes supply.Balance+p.TokenAmount,
+			// which could wrap around uint64.
+			if p.TokenAmount > ctx.MaxTotalSupply || supply.Balance > ctx.MaxTotalSupply-p.TokenAmount {
 				return errors.New("total supply cap exceeded")
 			}
 			supply.Balance += p.TokenAmount

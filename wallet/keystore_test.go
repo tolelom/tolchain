@@ -1,6 +1,10 @@
 package wallet
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -54,6 +58,85 @@ func TestSaveLoadKey_RoundTrip(t *testing.T) {
 	}
 	if loaded.Public().Hex() != priv.Public().Hex() {
 		t.Error("loaded key's public key does not match original")
+	}
+}
+
+// --- Corrupted nonce must return an error, not panic ---
+
+func TestLoadKey_CorruptedNonceLength(t *testing.T) {
+	priv, _, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.key")
+	password := "pw"
+
+	if err := SaveKey(path, password, priv); err != nil {
+		t.Fatalf("SaveKey: %v", err)
+	}
+
+	// Truncate the nonce field in the keystore file.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ks keystoreFile
+	if err := json.Unmarshal(data, &ks); err != nil {
+		t.Fatal(err)
+	}
+	ks.Nonce = "0011" // 2 bytes — far shorter than the GCM nonce size
+	corrupted, err := json.Marshal(ks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, corrupted, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadKey(path, password); err == nil {
+		t.Fatal("expected error for corrupted nonce, got nil")
+	}
+}
+
+// --- Decrypted plaintext with wrong key length must return an error ---
+
+func TestLoadKey_WrongKeyLength(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.key")
+	password := "pw"
+
+	// Hand-craft a keystore whose plaintext decrypts fine but is NOT a valid
+	// ed25519 private key (wrong length).
+	salt := make([]byte, saltSize)
+	key := deriveKey(password, salt)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	cipherText := gcm.Seal(nil, nonce, []byte("too-short-key"), nil)
+
+	ks := keystoreFile{
+		Salt:       hex.EncodeToString(salt),
+		Nonce:      hex.EncodeToString(nonce),
+		CipherText: hex.EncodeToString(cipherText),
+	}
+	data, err := json.Marshal(ks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadKey(path, password); err == nil {
+		t.Fatal("expected error for wrong decrypted key length, got nil")
 	}
 }
 

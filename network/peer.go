@@ -100,7 +100,8 @@ func (p *Peer) Send(msg Message) error {
 }
 
 // Receive reads the next length-prefixed JSON message.
-// A 5-minute read deadline prevents a stalled peer from blocking indefinitely.
+// The configured read timeout (readTimeout) prevents a stalled peer from
+// blocking indefinitely.
 func (p *Peer) Receive() (Message, error) {
 	if err := p.conn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
 		return Message{}, fmt.Errorf("set read deadline: %w", err)

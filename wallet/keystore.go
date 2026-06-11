@@ -4,6 +4,7 @@ package wallet
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -33,7 +34,7 @@ type keystoreFile struct {
 }
 
 // SaveKey encrypts priv with password and writes it to path.
-// Key derivation: SHA-256(password || salt) — simple, sufficient for this chain.
+// Key derivation: PBKDF2-SHA256 with 210k iterations (see deriveKey).
 func SaveKey(path, password string, priv crypto.PrivateKey) error {
 	salt := make([]byte, saltSize)
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
@@ -100,9 +101,16 @@ func LoadKey(path, password string) (crypto.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
+	// gcm.Open panics on a wrong-size nonce; validate it first.
+	if len(nonce) != gcm.NonceSize() {
+		return nil, errors.New("corrupted keystore: invalid nonce length")
+	}
 	privBytes, err := gcm.Open(nil, nonce, cipherText, nil)
 	if err != nil {
 		return nil, errors.New("wrong password or corrupted keystore")
+	}
+	if len(privBytes) != ed25519.PrivateKeySize {
+		return nil, errors.New("corrupted keystore: invalid private key length")
 	}
 	return crypto.PrivateKey(privBytes), nil
 }

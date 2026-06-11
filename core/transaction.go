@@ -63,7 +63,7 @@ type signingBody struct {
 }
 
 // Hash returns a deterministic hash of the transaction (sans Signature).
-// Returns an empty string if marshalling fails (which cannot happen in practice).
+// Panics if marshalling fails (which cannot happen in practice).
 func (tx *Transaction) Hash() string {
 	body := signingBody{
 		ChainID:    tx.ChainID,

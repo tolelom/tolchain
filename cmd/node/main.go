@@ -42,6 +42,7 @@ func main() {
 	cfgPath := flag.String("config", "config.json", "path to config file")
 	keyPath := flag.String("key", "validator.key", "path to keystore file")
 	genKey := flag.Bool("genkey", false, "generate a new validator key and exit")
+	force := flag.Bool("force", false, "with -genkey: overwrite an existing keystore file")
 	genCerts := flag.String("gencerts", "", "generate CA + node TLS certs into the given directory and exit (requires node ID from config)")
 	flag.Parse()
 
@@ -53,6 +54,17 @@ func main() {
 
 	// ---- generate key mode ----
 	if *genKey {
+		// Refuse to silently overwrite an existing validator keystore: losing
+		// that key permanently locks the validator out of its identity.
+		if !*force {
+			if _, err := os.Stat(*keyPath); err == nil {
+				slog.Error("keystore already exists; refusing to overwrite (use -force to override)", "path", *keyPath)
+				os.Exit(1)
+			} else if !os.IsNotExist(err) {
+				slog.Error("stat keystore failed", "path", *keyPath, "error", err)
+				os.Exit(1)
+			}
+		}
 		w, err := wallet.Generate()
 		if err != nil {
 			slog.Error("generate key failed", "error", err)

@@ -92,6 +92,12 @@ func handleBuyMarket(ctx *vm.Context, payload json.RawMessage) error {
 		return fmt.Errorf("seller cannot buy their own listing: %w", core.ErrUnauthorized)
 	}
 
+	// Enforce delegation MaxAmount before debiting. No-op for direct tx
+	// (OnBehalfOf == "") and for grants with MaxAmount == 0 (unlimited).
+	if err := vm.ChargeDelegationAmount(ctx, listing.Price); err != nil {
+		return err
+	}
+
 	// Deduct price from buyer
 	buyer, err := ctx.State.GetAccount(ctx.EffectiveSender)
 	if err != nil {

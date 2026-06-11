@@ -113,7 +113,9 @@ type State interface {
 	RevertToSnapshot(id int) error
 	// ComputeRoot returns the deterministic state root from the current write
 	// buffer without flushing. Call this before signing a block.
-	ComputeRoot() string
+	// A non-nil error means the root could not be computed from the full
+	// state; callers must abort block production/acceptance.
+	ComputeRoot() (string, error)
 	// Commit flushes the write buffer to the underlying DB and clears it.
 	// Always call ComputeRoot() first to obtain the root for the block header.
 	Commit() error

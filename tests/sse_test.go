@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -81,9 +82,12 @@ func TestSSEBrokerBroadcast(t *testing.T) {
 	}
 }
 
-// pipeResponseWriter implements http.ResponseWriter + http.Flusher by writing to a buffer.
+// pipeResponseWriter implements http.ResponseWriter + http.Flusher by writing
+// to a buffer. The handler goroutine writes while the test goroutine reads, so
+// the buffer is mutex-protected.
 type pipeResponseWriter struct {
 	header http.Header
+	mu     sync.Mutex
 	buf    strings.Builder
 	status int
 }
@@ -96,9 +100,13 @@ func newPipeResponseWriter() (*pipeResponseWriter, *pipeResponseWriter) {
 func (w *pipeResponseWriter) Header() http.Header { return w.header }
 func (w *pipeResponseWriter) WriteHeader(code int) { w.status = code }
 func (w *pipeResponseWriter) Write(b []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	return w.buf.Write(b)
 }
 func (w *pipeResponseWriter) Flush() {} // no-op, data is already in buffer
 func (w *pipeResponseWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	return w.buf.String()
 }

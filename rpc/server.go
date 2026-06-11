@@ -122,7 +122,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if !s.limiter.allow(extractIP(r)) {
 		metrics.RPCRateLimited.Inc()
+		// Headers must be set before WriteHeader; afterwards they are ignored.
 		w.Header().Set("Retry-After", "1")
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
 		writeJSON(w, errResponse(nil, CodeRateLimited, "rate limit exceeded"))
 		return
@@ -133,6 +135,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		expected := "Bearer " + s.authToken
 		if subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
 			metrics.RPCErrors.WithLabelValues(fmt.Sprint(CodeUnauthorized)).Inc()
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			writeJSON(w, errResponse(nil, CodeUnauthorized, "unauthorized"))
 			return

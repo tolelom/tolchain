@@ -133,7 +133,10 @@ func (e *Executor) executeTxLocked(block *core.Block, tx *core.Transaction) erro
 
 // validateDelegation checks that tx.From is permitted to act on behalf of
 // tx.OnBehalfOf, then increments the grant's UsedCount.
-func (e *Executor) validateDelegation(tx *core.Transaction) error {
+// Expiry is evaluated against the executing block's timestamp (not the wall
+// clock) so that every node — including ones replaying the block later —
+// reaches the same verdict.
+func (e *Executor) validateDelegation(block *core.Block, tx *core.Transaction) error {
 	if tx.Type == core.TxGrantDelegation || tx.Type == core.TxRevokeDelegation {
 		return fmt.Errorf("cannot execute %s via delegation", tx.Type)
 	}
@@ -141,8 +144,9 @@ func (e *Executor) validateDelegation(tx *core.Transaction) error {
 	if err != nil {
 		return fmt.Errorf("grant not found: %w", err)
 	}
-	if grant.ExpiresAt > 0 && time.Now().Unix() > grant.ExpiresAt {
-		_ = e.state.DeleteDelegation(tx.OnBehalfOf, tx.From)
+	// Block timestamps are UnixNano; ExpiresAt is in seconds.
+	blockTimeSec := block.Header.Timestamp / int64(time.Second)
+	if grant.ExpiresAt > 0 && blockTimeSec > grant.ExpiresAt {
 		return fmt.Errorf("delegation expired")
 	}
 	if grant.MaxUses > 0 && grant.UsedCount >= grant.MaxUses {
@@ -169,7 +173,7 @@ func (e *Executor) validateDelegation(tx *core.Transaction) error {
 func (e *Executor) applyTx(block *core.Block, tx *core.Transaction) error {
 	effectiveSender := tx.From
 	if tx.OnBehalfOf != "" {
-		if err := e.validateDelegation(tx); err != nil {
+		if err := e.validateDelegation(block, tx); err != nil {
 			return fmt.Errorf("delegation: %w", err)
 		}
 		effectiveSender = tx.OnBehalfOf

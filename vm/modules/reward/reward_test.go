@@ -260,6 +260,54 @@ func TestGrantReward_ZeroTokenWithAssets(t *testing.T) {
 	}
 }
 
+// TestGrantReward_SupplyCapOverflowBypass is a regression test: when
+// supply.Balance + p.TokenAmount overflows uint64, both naive comparisons
+// (supply > cap-amount with underflow, supply+amount > cap with wraparound)
+// pass and the cap is bypassed.
+func TestGrantReward_SupplyCapOverflowBypass(t *testing.T) {
+	state := testutil.NewStateDB()
+	_, pub, _ := crypto.GenerateKeyPair()
+	_, recipientPub, _ := crypto.GenerateKeyPair()
+
+	// Existing minted supply, well within the cap.
+	_ = state.SetAccount(&core.Account{Address: "system:total_supply", Balance: 500_000})
+
+	ctx := newCtx(t, state, pub.Hex())
+	ctx.MaxTotalSupply = 1_000_000
+
+	payload, _ := json.Marshal(core.GrantRewardPayload{
+		Recipient:   recipientPub.Hex(),
+		TokenAmount: math.MaxUint64 - 100, // 500_000 + amount wraps around uint64
+	})
+
+	if err := handleGrantReward(ctx, payload); err == nil {
+		t.Fatal("expected supply cap error for near-MaxUint64 token amount")
+	}
+
+	supply, _ := state.GetAccount("system:total_supply")
+	if supply.Balance != 500_000 {
+		t.Errorf("total supply mutated to %d, want unchanged 500000", supply.Balance)
+	}
+}
+
+func TestGrantReward_AmountAboveCapRejected(t *testing.T) {
+	state := testutil.NewStateDB()
+	_, pub, _ := crypto.GenerateKeyPair()
+	_, recipientPub, _ := crypto.GenerateKeyPair()
+
+	ctx := newCtx(t, state, pub.Hex())
+	ctx.MaxTotalSupply = 1_000_000
+
+	payload, _ := json.Marshal(core.GrantRewardPayload{
+		Recipient:   recipientPub.Hex(),
+		TokenAmount: 1_000_001,
+	})
+
+	if err := handleGrantReward(ctx, payload); err == nil {
+		t.Fatal("expected supply cap error for amount above cap")
+	}
+}
+
 func TestGrantReward_NilEmitterWithAssets(t *testing.T) {
 	state := testutil.NewStateDB()
 	_, pub, _ := crypto.GenerateKeyPair()
