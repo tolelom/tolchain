@@ -13,15 +13,19 @@ import (
 
 // BlockHeader contains the block metadata that is hashed and signed.
 type BlockHeader struct {
-	ChainID   string `json:"chain_id"`   // network identifier (prevents cross-chain replay)
+	ChainID   string `json:"chain_id"` // network identifier (prevents cross-chain replay)
 	Height    int64  `json:"height"`
 	PrevHash  string `json:"prev_hash"`
 	StateRoot string `json:"state_root"` // hash of state after executing this block
 	TxRoot    string `json:"tx_root"`    // hash of all transaction IDs
 	// Timestamp is set at block creation time using time.Now().UnixNano().
 	// Validators accept timestamps within [-1 hour, +15 seconds] of their local clock.
-	Timestamp int64  `json:"timestamp"`
-	Proposer  string `json:"proposer"` // proposer's pubkey hex
+	// Exception: the genesis block (height 0) carries the fixed, configured
+	// genesis.timestamp so that its hash is deterministic across nodes.
+	Timestamp int64 `json:"timestamp"`
+	// Proposer is the proposer's pubkey hex. Empty for the genesis block,
+	// which is derived deterministically from config and is unsigned.
+	Proposer string `json:"proposer"`
 }
 
 // Block is a collection of transactions with a signed header.

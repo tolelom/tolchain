@@ -5,17 +5,22 @@ import (
 	"math"
 
 	"github.com/tolelom/tolchain/core"
-	"github.com/tolelom/tolchain/crypto"
 )
 
 // GenesisHash is a canonical all-zeros previous hash for the genesis block.
 const GenesisHash = "0000000000000000000000000000000000000000000000000000000000000000"
 
-// CreateGenesisBlock builds and signs block #0 from the config's Alloc map.
+// CreateGenesisBlock builds block #0 deterministically from the config.
 // It also sets initial account balances in state and commits.
-func CreateGenesisBlock(cfg *Config, state core.State, proposerPriv crypto.PrivateKey) (*core.Block, error) {
-	proposerPub := proposerPriv.Public()
-
+//
+// The genesis block is fully derived from GenesisConfig: its timestamp comes
+// from genesis.timestamp, and it carries no proposer and no signature. Every
+// node bootstrapping from the same config therefore computes a byte-identical
+// genesis hash, so multi-node fresh bootstraps cannot fork at block 1.
+// Genesis is never validated through PoA ValidateBlock (it is built locally,
+// never received from peers — sync always starts at height 1), so the missing
+// signature does not weaken block validation.
+func CreateGenesisBlock(cfg *Config, state core.State) (*core.Block, error) {
 	// Credit all alloc accounts and track total supply.
 	var totalAlloc uint64
 	for pubkeyHex, balance := range cfg.Genesis.Alloc {
@@ -57,11 +62,21 @@ func CreateGenesisBlock(cfg *Config, state core.State, proposerPriv crypto.Priva
 		return nil, err
 	}
 
-	block := core.NewBlock(cfg.Genesis.ChainID, 0, GenesisHash, proposerPub.Hex(), nil)
-	block.Header.StateRoot = stateRoot
-	// Use the canonical empty TxRoot (genesis has no transactions).
-	block.Header.TxRoot = core.ComputeTxRoot(nil)
-	block.Sign(proposerPriv)
+	// Build the header by hand instead of core.NewBlock: NewBlock stamps
+	// time.Now(), which would make the genesis hash differ per node.
+	block := &core.Block{
+		Header: core.BlockHeader{
+			ChainID:   cfg.Genesis.ChainID,
+			Height:    0,
+			PrevHash:  GenesisHash,
+			StateRoot: stateRoot,
+			// Canonical empty TxRoot (genesis has no transactions).
+			TxRoot:    core.ComputeTxRoot(nil),
+			Timestamp: cfg.Genesis.Timestamp,
+			Proposer:  "", // deterministic genesis: no proposer, no signature
+		},
+	}
+	block.Hash = block.ComputeHash()
 	return block, nil
 }
 

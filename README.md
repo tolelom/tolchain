@@ -116,6 +116,7 @@ Create `config.json` (or omit for dev defaults):
   "operators": ["<game-server-pubkey-hex>"],
   "genesis": {
     "chain_id": "tolchain-mainnet",
+    "timestamp": 1735689600000000000,
     "alloc": {
       "<pubkey-hex>": 1000000
     }
@@ -140,6 +141,7 @@ Create `config.json` (or omit for dev defaults):
 | `max_block_txs` | `500` | Max transactions per block |
 | `validators` | — | Validator public keys (required) |
 | `operators` | — | Game operator keys (empty = no restriction) |
+| `genesis.timestamp` | `1735689600000000000` | Genesis block timestamp (Unix ns). Part of the genesis hash — must be identical on every node |
 | `rpc_auth_token` | — | Bearer token for RPC auth (empty = no auth) |
 
 Environment variable: `TOL_PASSWORD` — keystore encryption password.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 )
 
 const (
@@ -21,6 +22,11 @@ const (
 	// DefaultPruneKeepBlocks is the default number of recent blocks to keep.
 	// 0 means no pruning (keep all blocks).
 	DefaultPruneKeepBlocks = 0
+	// DefaultGenesisTimestamp is the genesis block timestamp (Unix nanoseconds)
+	// used when genesis.timestamp is omitted: 2025-01-01T00:00:00Z. A fixed
+	// constant keeps the genesis hash deterministic across nodes even when the
+	// field is not set explicitly.
+	DefaultGenesisTimestamp int64 = 1735689600000000000
 )
 
 // MempoolConfig controls transaction pool behavior.
@@ -42,13 +48,13 @@ type NetworkConfig struct {
 
 // RPCServerConfig controls JSON-RPC server behavior.
 type RPCServerConfig struct {
-	RateLimit      float64 `json:"rate_limit,omitempty"`        // requests/sec per IP; 0 → 100
-	RateBurst      int     `json:"rate_burst,omitempty"`        // burst size; 0 → 200
-	ReadTimeoutSec  int    `json:"read_timeout_sec,omitempty"`  // 0 → 30
-	WriteTimeoutSec int    `json:"write_timeout_sec,omitempty"` // 0 → 30
-	IdleTimeoutSec  int    `json:"idle_timeout_sec,omitempty"`  // 0 → 60
-	MaxBodySize     int64  `json:"max_body_size,omitempty"`     // bytes; 0 → 1048576 (1MB)
-	SSEBufferSize   int    `json:"sse_buffer_size,omitempty"`   // 0 → 64
+	RateLimit       float64 `json:"rate_limit,omitempty"`        // requests/sec per IP; 0 → 100
+	RateBurst       int     `json:"rate_burst,omitempty"`        // burst size; 0 → 200
+	ReadTimeoutSec  int     `json:"read_timeout_sec,omitempty"`  // 0 → 30
+	WriteTimeoutSec int     `json:"write_timeout_sec,omitempty"` // 0 → 30
+	IdleTimeoutSec  int     `json:"idle_timeout_sec,omitempty"`  // 0 → 60
+	MaxBodySize     int64   `json:"max_body_size,omitempty"`     // bytes; 0 → 1048576 (1MB)
+	SSEBufferSize   int     `json:"sse_buffer_size,omitempty"`   // 0 → 64
 }
 
 // ConsensusConfig controls block production.
@@ -72,31 +78,41 @@ type SeedPeer struct {
 }
 
 // GenesisConfig describes the chain's initial state.
+// All fields must be identical across nodes: the genesis block is derived
+// deterministically from this struct, so any difference (chain_id, timestamp,
+// alloc) produces a different genesis hash and an immediate fork.
 type GenesisConfig struct {
 	ChainID string            `json:"chain_id"`
 	Alloc   map[string]uint64 `json:"alloc"` // pubkey hex → initial balance
+	// Timestamp is the genesis block timestamp in Unix nanoseconds.
+	// It is part of the genesis hash, so every node bootstrapping from the
+	// same config builds a byte-identical genesis block. Omitted/0 → falls
+	// back to DefaultGenesisTimestamp. Must not be in the future: subsequent
+	// blocks must carry timestamps >= genesis, so a future value stalls
+	// block production until that time (rejected by Validate beyond 1h).
+	Timestamp int64 `json:"timestamp,omitempty"`
 }
 
 // Config holds all node configuration.
 type Config struct {
-	NodeID      string        `json:"node_id"`
-	DataDir     string        `json:"data_dir"`
-	RPCPort     int           `json:"rpc_port"`
-	P2PPort     int           `json:"p2p_port"`
-	MaxBlockTxs int           `json:"max_block_txs"` // max transactions per block; 0 → 500
-	Validators   []string      `json:"validators"`              // authorised proposer pubkey hexes
-	Operators    []string      `json:"operators,omitempty"`     // authorised game operator pubkey hexes (empty → no restriction)
-	Genesis      GenesisConfig `json:"genesis"`
-	SeedPeers    []SeedPeer    `json:"seed_peers,omitempty"`     // initial peers to connect to
-	TLS          *TLSConfig    `json:"tls,omitempty"`           // nil → plain TCP
-	RPCAuthToken    string           `json:"rpc_auth_token,omitempty"`    // empty → no auth
-	LogLevel        string           `json:"log_level,omitempty"`        // "debug","info","warn","error"; default "info"
-	PruneKeepBlocks int64            `json:"prune_keep_blocks,omitempty"` // 0 → no pruning; >0 → keep only the latest N blocks
-	MaxTotalSupply  uint64           `json:"max_total_supply,omitempty"` // 0 → unlimited; >0 → hard cap on total minted tokens
-	Mempool         MempoolConfig    `json:"mempool,omitempty"`
-	Network         NetworkConfig    `json:"network,omitempty"`
-	RPC             RPCServerConfig  `json:"rpc,omitempty"`
-	Consensus       ConsensusConfig  `json:"consensus,omitempty"`
+	NodeID          string          `json:"node_id"`
+	DataDir         string          `json:"data_dir"`
+	RPCPort         int             `json:"rpc_port"`
+	P2PPort         int             `json:"p2p_port"`
+	MaxBlockTxs     int             `json:"max_block_txs"`       // max transactions per block; 0 → 500
+	Validators      []string        `json:"validators"`          // authorised proposer pubkey hexes
+	Operators       []string        `json:"operators,omitempty"` // authorised game operator pubkey hexes (empty → no restriction)
+	Genesis         GenesisConfig   `json:"genesis"`
+	SeedPeers       []SeedPeer      `json:"seed_peers,omitempty"`        // initial peers to connect to
+	TLS             *TLSConfig      `json:"tls,omitempty"`               // nil → plain TCP
+	RPCAuthToken    string          `json:"rpc_auth_token,omitempty"`    // empty → no auth
+	LogLevel        string          `json:"log_level,omitempty"`         // "debug","info","warn","error"; default "info"
+	PruneKeepBlocks int64           `json:"prune_keep_blocks,omitempty"` // 0 → no pruning; >0 → keep only the latest N blocks
+	MaxTotalSupply  uint64          `json:"max_total_supply,omitempty"`  // 0 → unlimited; >0 → hard cap on total minted tokens
+	Mempool         MempoolConfig   `json:"mempool,omitempty"`
+	Network         NetworkConfig   `json:"network,omitempty"`
+	RPC             RPCServerConfig `json:"rpc,omitempty"`
+	Consensus       ConsensusConfig `json:"consensus,omitempty"`
 }
 
 // ApplyDefaults fills zero-valued fields with sensible defaults.
@@ -158,15 +174,18 @@ func (c *Config) ApplyDefaults() {
 	if c.LogLevel == "" {
 		c.LogLevel = DefaultLogLevel
 	}
+	if c.Genesis.Timestamp == 0 {
+		c.Genesis.Timestamp = DefaultGenesisTimestamp
+	}
 }
 
 // DefaultConfig returns a single-node development configuration.
 func DefaultConfig() *Config {
 	cfg := &Config{
-		NodeID:      "node0",
-		DataDir:     "./data",
-		RPCPort:     DefaultRPCPort,
-		P2PPort:     DefaultP2PPort,
+		NodeID:          "node0",
+		DataDir:         "./data",
+		RPCPort:         DefaultRPCPort,
+		P2PPort:         DefaultP2PPort,
 		MaxBlockTxs:     DefaultMaxBlockTxs,
 		LogLevel:        DefaultLogLevel,
 		PruneKeepBlocks: DefaultPruneKeepBlocks,
@@ -206,6 +225,15 @@ func (c *Config) Validate() error {
 	}
 	if c.Genesis.ChainID == "" {
 		return fmt.Errorf("genesis.chain_id must not be empty")
+	}
+	if c.Genesis.Timestamp < 0 {
+		return fmt.Errorf("genesis.timestamp must not be negative, got %d", c.Genesis.Timestamp)
+	}
+	// A genesis timestamp in the future stalls block production: every block
+	// must carry a timestamp >= its parent. Allow up to 1h drift (matches the
+	// consensus hard cap), reject anything beyond as a likely unit mistake.
+	if maxTs := time.Now().Add(time.Hour).UnixNano(); c.Genesis.Timestamp > maxTs {
+		return fmt.Errorf("genesis.timestamp %d is more than 1h in the future (unix nanoseconds expected)", c.Genesis.Timestamp)
 	}
 	if c.RPCPort <= 0 || c.RPCPort > 65535 {
 		return fmt.Errorf("rpc_port must be 1-65535, got %d", c.RPCPort)

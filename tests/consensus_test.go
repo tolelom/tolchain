@@ -41,7 +41,7 @@ func newTestPoA(t *testing.T) (*consensus.PoA, *core.Blockchain, *wallet.Wallet)
 	}
 	cfg.ApplyDefaults()
 
-	genesis, err := config.CreateGenesisBlock(cfg, state, w.PrivKey())
+	genesis, err := config.CreateGenesisBlock(cfg, state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestIsProposer_MultipleValidators(t *testing.T) {
 	}
 	cfg.ApplyDefaults()
 
-	genesis, _ := config.CreateGenesisBlock(cfg, state, w1.PrivKey())
+	genesis, _ := config.CreateGenesisBlock(cfg, state)
 	_ = bc.AddBlock(genesis)
 
 	emitter := events.NewEmitter()
@@ -197,7 +197,7 @@ func TestProduceBlock_TimestampDeterministicReplay(t *testing.T) {
 	if err := bcA.Init(); err != nil {
 		t.Fatal(err)
 	}
-	genesisA, err := config.CreateGenesisBlock(cfg, stateA, w.PrivKey())
+	genesisA, err := config.CreateGenesisBlock(cfg, stateA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestProduceBlock_TimestampDeterministicReplay(t *testing.T) {
 
 	// --- fresh syncing node, fed the broadcast blocks ---
 	stateB := storage.NewStateDB(testutil.NewMemDB())
-	if _, err := config.CreateGenesisBlock(cfg, stateB, w.PrivKey()); err != nil {
+	if _, err := config.CreateGenesisBlock(cfg, stateB); err != nil {
 		t.Fatal(err)
 	}
 	execB := vm.NewExecutor(stateB, events.NewEmitter())

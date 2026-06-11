@@ -55,9 +55,13 @@ func handleSessionOpen(ctx *vm.Context, payload json.RawMessage) error {
 		return fmt.Errorf("checking session %q: %w", p.SessionID, err)
 	}
 
-	// Verify that every player (except tx sender) has signed
-	// "session:<sessionID>" to prove consent — regardless of stakes.
-	consentMsg := []byte("session:" + p.SessionID)
+	// Verify that every player (except tx sender) has signed the canonical
+	// consent message (core.SessionConsentMessage) — regardless of stakes.
+	// The message commits to chain_id, session_id, game_id and stakes, so a
+	// consent cannot be replayed on another chain, for another session/game,
+	// or with a different stakes amount. The chain ID is taken from the
+	// executing block's header (the executor enforces tx.ChainID == block ChainID).
+	consentMsg := core.SessionConsentMessage(ctx.Block.Header.ChainID, p.SessionID, p.GameID, p.Stakes)
 	for _, player := range p.Players {
 		if player == ctx.EffectiveSender {
 			continue // the sender implicitly consents by submitting the tx
