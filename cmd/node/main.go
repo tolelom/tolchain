@@ -309,7 +309,7 @@ func main() {
 			"version":        "0.1.0",
 		}
 	}
-	rpcServer := rpc.NewServer(rpcAddr, rpcHandler, cfg.RPCAuthToken, sseBroker, statusFunc, cfg.RPC.RateLimit, cfg.RPC.RateBurst, cfg.RPC.ReadTimeoutSec, cfg.RPC.WriteTimeoutSec, cfg.RPC.IdleTimeoutSec, cfg.RPC.MaxBodySize)
+	rpcServer := rpc.NewServer(rpcAddr, rpcHandler, cfg.RPCAuthToken, sseBroker, statusFunc, cfg.RPC.RateLimit, cfg.RPC.RateBurst, cfg.RPC.ReadTimeoutSec, cfg.RPC.WriteTimeoutSec, cfg.RPC.IdleTimeoutSec, cfg.RPC.MaxBodySize, cfg.RPC.TrustedProxies)
 	if err := rpcServer.Start(); err != nil {
 		slog.Error("rpc start failed", "error", err)
 		os.Exit(1)

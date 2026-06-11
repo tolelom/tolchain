@@ -26,7 +26,7 @@ func newTestServer(authToken string) *Server {
 
 	return NewServer(":0", handler, authToken, nil, func() any {
 		return map[string]string{"status": "ok"}
-	}, 100, 200, 30, 30, 60, 1024*1024)
+	}, 100, 200, 30, 30, 60, 1024*1024, nil)
 }
 
 func TestServer_StartAndStop(t *testing.T) {
@@ -242,5 +242,43 @@ func TestServer_ServeHTTP_RateLimited(t *testing.T) {
 
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("got %d, want 429", w.Code)
+	}
+}
+
+// ---- reverse proxy trust (rate limit bucket separation) ----
+
+func TestServeHTTP_TrustedProxy_SeparateBucketsPerForwardedIP(t *testing.T) {
+	store := testutil.NewMemBlockStore()
+	bc := core.NewBlockchain(store)
+	bc.Init()
+	mempool := core.NewMempool(10000, 3600, 300)
+	state := testutil.NewStateDB()
+	db := testutil.NewMemDB()
+	emitter := events.NewEmitter()
+	idx := indexer.New(db, emitter)
+	handler := NewHandler(bc, mempool, state, idx, "test-chain")
+
+	// burst 1 + 사실상 0에 가까운 rate → 같은 클라이언트의 두 번째 요청은 즉시 429.
+	s := NewServer(":0", handler, "", nil, nil, 0.0001, 1, 30, 30, 60, 1024*1024, []string{"10.0.0.1"})
+	defer s.limiter.stop()
+
+	do := func(xff string) int {
+		body, _ := json.Marshal(Request{JSONRPC: "2.0", ID: 1, Method: "getBlockHeight"})
+		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+		req.RemoteAddr = "10.0.0.1:5555"
+		req.Header.Set("X-Forwarded-For", xff)
+		w := httptest.NewRecorder()
+		s.serveHTTP(w, req)
+		return w.Code
+	}
+
+	if code := do("1.1.1.1"); code == http.StatusTooManyRequests {
+		t.Fatalf("first request for client A should not be rate limited, got %d", code)
+	}
+	if code := do("1.1.1.1"); code != http.StatusTooManyRequests {
+		t.Fatalf("second request for client A should be rate limited, got %d", code)
+	}
+	if code := do("2.2.2.2"); code == http.StatusTooManyRequests {
+		t.Fatalf("client B should have its own bucket, got %d", code)
 	}
 }

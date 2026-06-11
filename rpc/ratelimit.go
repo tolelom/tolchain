@@ -3,6 +3,7 @@ package rpc
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -103,4 +104,77 @@ func extractIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// parseTrustedNets converts a list of IPs/CIDRs into networks. A plain IP is
+// treated as a /32 (or /128 for IPv6). Malformed entries are skipped —
+// config.Validate rejects them before they can reach here.
+func parseTrustedNets(entries []string) []*net.IPNet {
+	nets := make([]*net.IPNet, 0, len(entries))
+	for _, e := range entries {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		if strings.Contains(e, "/") {
+			if _, n, err := net.ParseCIDR(e); err == nil {
+				nets = append(nets, n)
+			}
+			continue
+		}
+		ip := net.ParseIP(e)
+		if ip == nil {
+			continue
+		}
+		bits := 128
+		if ip.To4() != nil {
+			bits = 32
+		}
+		nets = append(nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+	}
+	return nets
+}
+
+// clientIP returns the client identity used for rate limiting.
+//
+// When the request's peer (RemoteAddr) belongs to one of the trusted proxy
+// networks and an X-Forwarded-For header is present, the LAST (rightmost)
+// hop of the header is used: that is the address the trusted proxy itself
+// appended — the only value it vouches for. Earlier (leftmost) entries are
+// client-controlled and trivially spoofable, so they are never used.
+//
+// With trusted empty (the default), or for any peer outside the trusted
+// networks, X-Forwarded-For is ignored and RemoteAddr is used, preserving
+// the original behavior for directly exposed nodes.
+func clientIP(r *http.Request, trusted []*net.IPNet) string {
+	remote := extractIP(r)
+	if len(trusted) == 0 {
+		return remote
+	}
+	remoteIP := net.ParseIP(remote)
+	if remoteIP == nil {
+		return remote
+	}
+	isTrusted := false
+	for _, n := range trusted {
+		if n.Contains(remoteIP) {
+			isTrusted = true
+			break
+		}
+	}
+	if !isTrusted {
+		return remote
+	}
+	xff := r.Header.Get("X-Forwarded-For")
+	if xff == "" {
+		return remote
+	}
+	hops := strings.Split(xff, ",")
+	last := strings.TrimSpace(hops[len(hops)-1])
+	if net.ParseIP(last) == nil {
+		// Malformed forwarded value: fall back to the proxy address rather
+		// than letting garbage become a rate-limit key.
+		return remote
+	}
+	return last
 }

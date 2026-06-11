@@ -573,3 +573,37 @@ func TestIsGenesisHash(t *testing.T) {
 		t.Error("IsGenesisHash(\"\") = true, want false")
 	}
 }
+
+// ---- RPC trusted_proxies ----
+
+func TestValidate_RPCTrustedProxies_Valid(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.RPC.TrustedProxies = []string{"127.0.0.1", "10.0.0.0/8", "::1", "fd00::/8"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestValidate_RPCTrustedProxies_MalformedCIDR(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.RPC.TrustedProxies = []string{"10.0.0.0/99"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected Validate to fail for malformed CIDR")
+	}
+}
+
+func TestValidate_RPCTrustedProxies_MalformedIP(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.RPC.TrustedProxies = []string{"not-an-ip"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected Validate to fail for malformed IP")
+	}
+}
+
+func TestValidate_RPCTrustedProxies_EmptyEntry(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.RPC.TrustedProxies = []string{""}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected Validate to fail for empty entry")
+	}
+}
