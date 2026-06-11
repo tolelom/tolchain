@@ -22,14 +22,15 @@ const (
 
 // Server is a JSON-RPC 2.0 HTTP server.
 type Server struct {
-	handler        *Handler
-	addr           string
-	authToken      string // empty → no auth required
-	statusFunc     func() any
-	srv            *http.Server
-	ln             net.Listener
-	limiter        *ipLimiter
-	maxBodySize    int64
+	handler     *Handler
+	addr        string
+	authToken   string // empty → no auth required
+	statusFunc  func() any
+	srv         *http.Server
+	ln          net.Listener
+	limiter     *ipLimiter
+	maxBodySize int64
+	trustedNets []*net.IPNet // peers whose X-Forwarded-For is trusted; empty → RemoteAddr only
 }
 
 // NewServer creates a Server on addr. If authToken is non-empty, every
@@ -38,7 +39,10 @@ type Server struct {
 // If statusFunc is non-nil, a GET /status endpoint returns its result as JSON.
 // rateLimit, rateBurst, readTimeoutSec, writeTimeoutSec, idleTimeoutSec, maxBodySize
 // control server behavior.
-func NewServer(addr string, handler *Handler, authToken string, sseBroker *SSEBroker, statusFunc func() any, rateLimitVal float64, rateBurstVal int, readTimeoutSec, writeTimeoutSec, idleTimeoutSec int, maxBodySize int64) *Server {
+// trustedProxies is a list of IPs/CIDRs (config rpc.trusted_proxies): requests
+// arriving from these peers use the last X-Forwarded-For hop as the rate-limit
+// identity. Empty (the default) keeps the RemoteAddr-only behavior.
+func NewServer(addr string, handler *Handler, authToken string, sseBroker *SSEBroker, statusFunc func() any, rateLimitVal float64, rateBurstVal int, readTimeoutSec, writeTimeoutSec, idleTimeoutSec int, maxBodySize int64, trustedProxies []string) *Server {
 	s := &Server{
 		handler:     handler,
 		addr:        addr,
@@ -46,6 +50,7 @@ func NewServer(addr string, handler *Handler, authToken string, sseBroker *SSEBr
 		statusFunc:  statusFunc,
 		limiter:     newIPLimiter(rateLimitVal, rateBurstVal),
 		maxBodySize: maxBodySize,
+		trustedNets: parseTrustedNets(trustedProxies),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.serveHTTP)
@@ -120,7 +125,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.limiter.allow(extractIP(r)) {
+	if !s.limiter.allow(clientIP(r, s.trustedNets)) {
 		metrics.RPCRateLimited.Inc()
 		// Headers must be set before WriteHeader; afterwards they are ignored.
 		w.Header().Set("Retry-After", "1")
@@ -183,7 +188,7 @@ func (s *Server) serveStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "only GET allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !s.limiter.allow(extractIP(r)) {
+	if !s.limiter.allow(clientIP(r, s.trustedNets)) {
 		w.Header().Set("Retry-After", "1")
 		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return

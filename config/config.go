@@ -4,7 +4,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -55,6 +57,13 @@ type RPCServerConfig struct {
 	IdleTimeoutSec  int     `json:"idle_timeout_sec,omitempty"`  // 0 → 60
 	MaxBodySize     int64   `json:"max_body_size,omitempty"`     // bytes; 0 → 1048576 (1MB)
 	SSEBufferSize   int     `json:"sse_buffer_size,omitempty"`   // 0 → 64
+	// TrustedProxies lists peers (IPs/CIDRs) whose X-Forwarded-For header is
+	// trusted for rate-limit client identity. Only the LAST (rightmost) hop —
+	// the value the trusted proxy itself appended — is used; earlier hops are
+	// client-controlled. Empty (default) keeps RemoteAddr-only behavior,
+	// which is correct for directly exposed nodes. Opt in only when the node
+	// sits behind a reverse proxy you control.
+	TrustedProxies []string `json:"trusted_proxies,omitempty"`
 }
 
 // ConsensusConfig controls block production.
@@ -266,6 +275,15 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("validators[%d]: duplicate pubkey %q", i, v)
 		}
 		seen[v] = true
+	}
+	for i, e := range c.RPC.TrustedProxies {
+		if strings.Contains(e, "/") {
+			if _, _, err := net.ParseCIDR(e); err != nil {
+				return fmt.Errorf("rpc.trusted_proxies[%d]: invalid CIDR %q", i, e)
+			}
+		} else if net.ParseIP(e) == nil {
+			return fmt.Errorf("rpc.trusted_proxies[%d]: invalid IP %q", i, e)
+		}
 	}
 	if c.TLS != nil {
 		t := c.TLS
