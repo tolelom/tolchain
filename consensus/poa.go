@@ -7,14 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/tolelom/tolchain/config"
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/crypto"
 	"github.com/tolelom/tolchain/events"
-	"github.com/tolelom/tolchain/metrics"
 	"github.com/tolelom/tolchain/vm"
 )
 
@@ -72,156 +70,16 @@ func (p *PoA) IsProposer() bool {
 // For production deployments with untrusted validators, consider adding a
 // transaction inclusion watchdog or switching to a BFT consensus protocol.
 func (p *PoA) ProduceBlock() (*core.Block, error) {
-	start := time.Now()
-	if !p.IsProposer() {
-		return nil, errors.New("not the proposer for this round")
-	}
-
-	limit := p.cfg.MaxBlockTxs
-	if limit <= 0 {
-		limit = defaultMaxBlockTxs
-	}
-	candidates := p.mempool.Pending(limit)
-
-	// Acquire the block-execution write lock so that RPC queries (which hold
-	// the read lock) cannot observe partially-applied state.
-	p.state.BlockLock()
-
-	// Read the tip only after acquiring the lock so the produced block cannot
-	// be based on a stale tip (e.g. a block accepted by sync in between).
-	tip := p.bc.Tip()
-	var prevHash string
-	var nextHeight int64
-	// Genesis block (height 0) is created by CreateGenesisBlock in main.go,
-	// not by ProduceBlock. If tip is nil here, it means genesis is missing,
-	// and the produced block at height 1 will be rejected by AddBlock.
-	if tip == nil {
-		prevHash = config.GenesisHash
-		nextHeight = 1
-	} else {
-		prevHash = tip.Hash
-		nextHeight = tip.Header.Height + 1
-	}
-
-	// Take a block-level snapshot so we can rollback all state changes if
-	// AddBlock fails later.
-	blockSnapID, err := p.state.Snapshot()
-	if err != nil {
-		p.state.BlockUnlock()
-		return nil, fmt.Errorf("block snapshot: %w", err)
-	}
-
-	// Buffer events during execution so they are only delivered after commit.
-	buf := events.NewBuffer()
-	p.exec.SetEmitter(buf)
-
-	// Build a temporary block to provide context during execution.
-	tmpBlock := core.NewBlock(p.cfg.Genesis.ChainID, nextHeight, prevHash, p.pubKey.Hex(), candidates)
-
-	// Execute each transaction individually; keep only successful ones.
-	var successTxs []*core.Transaction
-	var failedIDs []string
-	for _, tx := range candidates {
-		if txErr := p.exec.ExecuteTx(tmpBlock, tx); txErr != nil {
-			slog.Warn("skipping failed tx", "component", "consensus", "tx_id", tx.ID, "error", txErr)
-			metrics.TxFailed.Inc()
-			failedIDs = append(failedIDs, tx.ID)
-			continue
+	s := &produceBlock{p: p, start: time.Now()}
+	if err := RunProduceBlock(s); err != nil {
+		// 실패한 단계가 돌려준 오류를 그대로 돌려준다.
+		var fe *FlowError
+		if errors.As(err, &fe) {
+			return nil, fe.Err
 		}
-		successTxs = append(successTxs, tx)
+		return nil, err
 	}
-
-	// Restore the real emitter.
-	p.exec.SetEmitter(p.emitter)
-
-	// Reuse tmpBlock as the final block so the broadcast header carries the
-	// exact timestamp the handlers observed during execution (handlers store
-	// it into state, e.g. Asset.MintedAt). Creating a second block here would
-	// stamp a fresh time.Now() and make syncing nodes compute a different
-	// StateRoot when they re-execute the block.
-	block := tmpBlock
-	block.Transactions = successTxs
-	block.Header.TxRoot = core.ComputeTxRoot(successTxs)
-
-	// Compute root from the write buffer BEFORE flushing so that if AddBlock
-	// fails the state has not yet been persisted and the node stays consistent.
-	stateRoot, err := p.state.ComputeRoot()
-	if err != nil {
-		buf.Discard()
-		if revErr := p.state.RevertToSnapshot(blockSnapID); revErr != nil {
-			slog.Error("FATAL: state root computation failed and snapshot revert failed",
-				"component", "consensus", "height", block.Header.Height, "revert_error", revErr, "root_error", err)
-			os.Exit(1)
-		}
-		p.state.BlockUnlock()
-		return nil, fmt.Errorf("compute state root: %w", err)
-	}
-	block.Header.StateRoot = stateRoot
-	block.Sign(p.privKey)
-
-	// Defensive self-validation: run the same checks peers will run before
-	// broadcasting. Catches proposer bugs (wrong index, timestamp drift, hash
-	// mismatch) early instead of letting peers reject the broadcast.
-	if err := p.ValidateBlock(block); err != nil {
-		buf.Discard()
-		if revErr := p.state.RevertToSnapshot(blockSnapID); revErr != nil {
-			slog.Error("FATAL: self-validation failed and snapshot revert failed",
-				"component", "consensus", "height", block.Header.Height, "revert_error", revErr, "validation_error", err)
-			os.Exit(1)
-		}
-		p.state.BlockUnlock()
-		return nil, fmt.Errorf("self-validation: %w", err)
-	}
-
-	if err := p.bc.AddBlock(block); err != nil {
-		// Discard buffered events and rollback all state changes.
-		buf.Discard()
-		if revErr := p.state.RevertToSnapshot(blockSnapID); revErr != nil {
-			slog.Error("FATAL: AddBlock failed and snapshot revert failed", "component", "consensus", "height", block.Header.Height, "revert_error", revErr, "add_error", err)
-			os.Exit(1)
-		}
-		p.state.BlockUnlock()
-		return nil, fmt.Errorf("add block: %w", err)
-	}
-
-	// Flush state only after the block is safely stored.
-	if err := p.state.Commit(); err != nil {
-		slog.Error("FATAL: block stored but state commit failed", "component", "consensus", "height", block.Header.Height, "error", err)
-		os.Exit(1)
-	}
-
-	// Release the block-execution lock now that state is fully committed.
-	p.state.BlockUnlock()
-
-	// Flush buffered tx-level events now that the block is committed.
-	buf.Flush(p.emitter)
-
-	// Emit block commit after Sign() so block.Hash is set correctly.
-	p.emitter.Emit(events.Event{
-		Type:        events.EventBlockCommit,
-		BlockHeight: block.Header.Height,
-		Data:        events.BlockCommitData{Hash: block.Hash, Txs: len(block.Transactions), Block: block}.Map(),
-	})
-
-	txIDs := make([]string, len(successTxs))
-	for i, tx := range successTxs {
-		txIDs[i] = tx.ID
-	}
-	p.mempool.Remove(txIDs)
-
-	// Remove failed transactions only after the block is committed. Removing
-	// them earlier would permanently drop txs that failed solely because block
-	// production was aborted (stale tip, AddBlock failure, ...).
-	if len(failedIDs) > 0 {
-		p.mempool.Remove(failedIDs)
-	}
-
-	metrics.BlocksProduced.Inc()
-	metrics.BlockHeight.Set(float64(block.Header.Height))
-	metrics.BlockProductionDuration.Observe(time.Since(start).Seconds())
-	metrics.BlockTxCount.Observe(float64(len(successTxs)))
-
-	return block, nil
+	return s.block, nil
 }
 
 const (

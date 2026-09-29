@@ -3,7 +3,6 @@ package network
 import (
 	"encoding/json"
 	"log/slog"
-	"os"
 
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/events"
@@ -127,110 +126,12 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 		return
 	}
 	for _, b := range resp.Blocks {
-		if s.validator != nil {
-			if err := s.validator.ValidateBlock(b); err != nil {
-				slog.Error("block validation failed", "component", "sync", "height", b.Header.Height, "error", err)
-				return // stop processing blocks from this peer
-			}
-		}
-
-		// Acquire block-execution write lock to prevent RPC from seeing
-		// partially-applied state during execution.
-		if s.state != nil {
-			s.state.BlockLock()
-		}
-
-		// Take a snapshot so we can revert if AddBlock fails.
-		var snapID int
-		var buf *events.Buffer
-		if s.exec != nil && s.state != nil {
-			var err error
-			snapID, err = s.state.Snapshot()
-			if err != nil {
-				s.state.BlockUnlock()
-				slog.Error("block snapshot failed", "component", "sync", "height", b.Header.Height, "error", err)
+		if err := RunApplyBlock(&applyBlock{s: s, b: b}); err != nil {
+			// 스냅샷 실패는 이 블록만 건너뛴다. 그 밖의 실패는 이 피어의 블록 처리를 멈춘다.
+			if applyFailure(err, b) == "snapshot" {
 				continue
 			}
-			// Buffer events during execution so they are only delivered
-			// after a successful commit.
-			buf = events.NewBuffer()
-			s.exec.SetEmitter(buf)
-			if err := s.exec.ExecuteBlock(b); err != nil {
-				s.exec.SetEmitter(s.emitter)
-				buf.Discard()
-				if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
-					slog.Error("FATAL: revert failed after exec error", "component", "sync", "height", b.Header.Height, "revert_error", revErr, "exec_error", err)
-				os.Exit(1)
-				}
-				s.state.BlockUnlock()
-				slog.Error("block execution failed", "component", "sync", "height", b.Header.Height, "error", err)
-				return
-			}
-			s.exec.SetEmitter(s.emitter)
-		}
-
-		// (A) Verify state root matches after execution.
-		if s.exec != nil && s.state != nil {
-			computedRoot, rootErr := s.state.ComputeRoot()
-			if rootErr != nil {
-				buf.Discard()
-				if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
-					slog.Error("FATAL: revert failed after state root error", "component", "sync", "height", b.Header.Height, "revert_error", revErr, "root_error", rootErr)
-					os.Exit(1)
-				}
-				s.state.BlockUnlock()
-				slog.Error("state root computation failed", "component", "sync", "height", b.Header.Height, "error", rootErr)
-				return
-			}
-			if b.Header.StateRoot != "" && computedRoot != b.Header.StateRoot {
-				buf.Discard()
-				if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
-					slog.Error("FATAL: revert failed after state root mismatch", "component", "sync", "height", b.Header.Height, "error", revErr)
-				os.Exit(1)
-				}
-				s.state.BlockUnlock()
-				slog.Error("block state root mismatch", "component", "sync", "height", b.Header.Height, "computed", computedRoot, "want", b.Header.StateRoot)
-				return
-			}
-		}
-
-		if err := s.bc.AddBlock(b); err != nil {
-			if s.exec != nil && s.state != nil {
-				buf.Discard()
-				if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
-					slog.Error("FATAL: revert failed after add error", "component", "sync", "height", b.Header.Height, "revert_error", revErr, "add_error", err)
-				os.Exit(1)
-				}
-			}
-			if s.state != nil {
-				s.state.BlockUnlock()
-			}
-			slog.Error("block add failed", "component", "sync", "height", b.Header.Height, "error", err)
 			return
-		}
-
-		if s.exec != nil && s.state != nil {
-			if err := s.state.Commit(); err != nil {
-				slog.Error("FATAL: block state commit failed", "component", "sync", "height", b.Header.Height, "error", err)
-			os.Exit(1)
-			}
-			// Flush buffered events now that the block is committed.
-			if buf != nil {
-				buf.Flush(s.emitter)
-			}
-		}
-
-		if s.state != nil {
-			s.state.BlockUnlock()
-		}
-
-		// Remove synced transactions from the mempool.
-		if s.mempool != nil && len(b.Transactions) > 0 {
-			txIDs := make([]string, len(b.Transactions))
-			for i, tx := range b.Transactions {
-				txIDs[i] = tx.ID
-			}
-			s.mempool.Remove(txIDs)
 		}
 	}
 
@@ -259,106 +160,9 @@ func (s *Syncer) handleBlock(_ *Peer, msg Message) {
 		return
 	}
 
-	if s.validator != nil {
-		if err := s.validator.ValidateBlock(&b); err != nil {
-			slog.Error("block validation failed", "component", "sync", "height", b.Header.Height, "error", err)
-			return
-		}
-	}
-
-	// Acquire block-execution write lock to prevent RPC from seeing
-	// partially-applied state during execution.
-	if s.state != nil {
-		s.state.BlockLock()
-	}
-
-	var snapID int
-	var buf *events.Buffer
-	if s.exec != nil && s.state != nil {
-		var err error
-		snapID, err = s.state.Snapshot()
-		if err != nil {
-			s.state.BlockUnlock()
-			slog.Error("block snapshot failed", "component", "sync", "height", b.Header.Height, "error", err)
-			return
-		}
-		buf = events.NewBuffer()
-		s.exec.SetEmitter(buf)
-		if err := s.exec.ExecuteBlock(&b); err != nil {
-			s.exec.SetEmitter(s.emitter)
-			buf.Discard()
-			if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
-				slog.Error("FATAL: revert failed after exec error", "component", "sync", "height", b.Header.Height, "revert_error", revErr, "exec_error", err)
-				os.Exit(1)
-			}
-			s.state.BlockUnlock()
-			slog.Error("block execution failed", "component", "sync", "height", b.Header.Height, "error", err)
-			return
-		}
-		s.exec.SetEmitter(s.emitter)
-	}
-
-	// Verify state root matches after execution.
-	if s.exec != nil && s.state != nil {
-		computedRoot, rootErr := s.state.ComputeRoot()
-		if rootErr != nil {
-			buf.Discard()
-			if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
-				slog.Error("FATAL: revert failed after state root error", "component", "sync", "height", b.Header.Height, "revert_error", revErr, "root_error", rootErr)
-				os.Exit(1)
-			}
-			s.state.BlockUnlock()
-			slog.Error("state root computation failed", "component", "sync", "height", b.Header.Height, "error", rootErr)
-			return
-		}
-		if b.Header.StateRoot != "" && computedRoot != b.Header.StateRoot {
-			buf.Discard()
-			if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
-				slog.Error("FATAL: revert failed after state root mismatch", "component", "sync", "height", b.Header.Height, "error", revErr)
-				os.Exit(1)
-			}
-			s.state.BlockUnlock()
-			slog.Error("block state root mismatch", "component", "sync", "height", b.Header.Height, "computed", computedRoot, "want", b.Header.StateRoot)
-			return
-		}
-	}
-
-	if err := s.bc.AddBlock(&b); err != nil {
-		if s.exec != nil && s.state != nil {
-			buf.Discard()
-			if revErr := s.state.RevertToSnapshot(snapID); revErr != nil {
-				slog.Error("FATAL: revert failed after add error", "component", "sync", "height", b.Header.Height, "revert_error", revErr, "add_error", err)
-				os.Exit(1)
-			}
-		}
-		if s.state != nil {
-			s.state.BlockUnlock()
-		}
-		slog.Error("block add failed", "component", "sync", "height", b.Header.Height, "error", err)
+	if err := RunApplyBlock(&applyBlock{s: s, b: &b}); err != nil {
+		applyFailure(err, &b)
 		return
-	}
-
-	if s.exec != nil && s.state != nil {
-		if err := s.state.Commit(); err != nil {
-			slog.Error("FATAL: block state commit failed", "component", "sync", "height", b.Header.Height, "error", err)
-			os.Exit(1)
-		}
-		if buf != nil {
-			buf.Flush(s.emitter)
-		}
-	}
-
-	if s.state != nil {
-		s.state.BlockUnlock()
-	}
-
-	// Remove committed transactions from the mempool.
-	if s.mempool != nil && len(b.Transactions) > 0 {
-		txIDs := make([]string, len(b.Transactions))
-		for i, tx := range b.Transactions {
-			txIDs[i] = tx.ID
-		}
-		s.mempool.Remove(txIDs)
 	}
 
 	slog.Info("accepted broadcast block", "component", "sync", "height", b.Header.Height, "hash", b.Hash)
