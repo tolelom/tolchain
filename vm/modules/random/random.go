@@ -52,7 +52,7 @@ func handleRandomCommit(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventRandomCommit,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"commit_id": p.CommitID, "committer": ctx.EffectiveSender},
+			Data:        events.RandomCommitData{CommitID: p.CommitID, Committer: ctx.EffectiveSender}.Map(),
 		})
 	}
 	return nil
@@ -109,7 +109,7 @@ func handleRandomReveal(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventRandomReveal,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"commit_id": p.CommitID, "result": result},
+			Data:        events.RandomRevealData{CommitID: p.CommitID, Result: result}.Map(),
 		})
 	}
 	return nil

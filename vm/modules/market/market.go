@@ -63,7 +63,7 @@ func handleListMarket(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventMarketList,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"listing_id": listingID, "asset_id": p.AssetID, "price": p.Price},
+			Data:        events.MarketListData{ListingID: listingID, AssetID: p.AssetID, Price: p.Price}.Map(),
 		})
 	}
 	return nil
@@ -141,13 +141,13 @@ func handleBuyMarket(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventMarketBuy,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data: map[string]any{
-				"listing_id": p.ListingID,
-				"asset_id":   listing.AssetID,
-				"buyer":      ctx.EffectiveSender,
-				"seller":     listing.Seller,
-				"price":      listing.Price,
-			},
+			Data: events.MarketBuyData{
+				ListingID: p.ListingID,
+				AssetID:   listing.AssetID,
+				Buyer:     ctx.EffectiveSender,
+				Seller:    listing.Seller,
+				Price:     listing.Price,
+			}.Map(),
 		})
 	}
 	return nil
@@ -191,7 +191,7 @@ func handleCancelListing(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventMarketCancel,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"listing_id": p.ListingID, "asset_id": listing.AssetID, "seller": listing.Seller},
+			Data:        events.MarketCancelData{ListingID: p.ListingID, AssetID: listing.AssetID, Seller: listing.Seller}.Map(),
 		})
 	}
 	return nil

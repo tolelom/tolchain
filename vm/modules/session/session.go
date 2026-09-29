@@ -110,7 +110,7 @@ func handleSessionOpen(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventSessionOpen,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"session_id": p.SessionID, "game_id": p.GameID, "players": p.Players},
+			Data:        events.SessionOpenData{SessionID: p.SessionID, GameID: p.GameID, Players: p.Players}.Map(),
 		})
 	}
 	return nil
@@ -197,7 +197,7 @@ func handleSessionResult(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventSessionClose,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"session_id": p.SessionID},
+			Data:        events.SessionCloseData{SessionID: p.SessionID}.Map(),
 		})
 	}
 	return nil
@@ -254,7 +254,7 @@ func handleSessionCancel(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventSessionCancel,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"session_id": p.SessionID},
+			Data:        events.SessionCancelData{SessionID: p.SessionID}.Map(),
 		})
 	}
 	return nil

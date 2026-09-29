@@ -200,7 +200,7 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 	p.emitter.Emit(events.Event{
 		Type:        events.EventBlockCommit,
 		BlockHeight: block.Header.Height,
-		Data:        map[string]any{"hash": block.Hash, "txs": len(block.Transactions), "block": block},
+		Data:        events.BlockCommitData{Hash: block.Hash, Txs: len(block.Transactions), Block: block}.Map(),
 	})
 
 	txIDs := make([]string, len(successTxs))

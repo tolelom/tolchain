@@ -114,7 +114,7 @@ func (e *Executor) executeTxLocked(block *core.Block, tx *core.Transaction) erro
 				Type:        events.EventTxExecuted,
 				TxID:        tx.ID,
 				BlockHeight: block.Header.Height,
-				Data:        map[string]any{"type": string(tx.Type), "from": tx.From, "success": false, "error": err.Error()},
+				Data:        events.TxExecutedData{Type: string(tx.Type), From: tx.From, Success: false, Error: err.Error()}.Map(),
 			})
 		}
 		return err
@@ -125,7 +125,7 @@ func (e *Executor) executeTxLocked(block *core.Block, tx *core.Transaction) erro
 			Type:        events.EventTxExecuted,
 			TxID:        tx.ID,
 			BlockHeight: block.Header.Height,
-			Data:        map[string]any{"type": string(tx.Type), "from": tx.From, "success": true, "error": ""},
+			Data:        events.TxExecutedData{Type: string(tx.Type), From: tx.From, Success: true, Error: ""}.Map(),
 		})
 	}
 	return nil

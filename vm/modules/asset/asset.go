@@ -65,7 +65,7 @@ func handleMintAsset(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventAssetMinted,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"asset_id": assetID, "template_id": p.TemplateID, "owner": owner},
+			Data:        events.AssetMintedData{AssetID: assetID, TemplateID: p.TemplateID, Owner: owner}.Map(),
 		})
 	}
 	return nil
@@ -100,7 +100,7 @@ func handleBurnAsset(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventAssetBurned,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"asset_id": p.AssetID, "owner": asset.Owner},
+			Data:        events.AssetBurnedData{AssetID: p.AssetID, Owner: asset.Owner}.Map(),
 		})
 	}
 	return nil
@@ -142,7 +142,7 @@ func handleTransferAsset(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventAssetTransfer,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"asset_id": p.AssetID, "from": ctx.EffectiveSender, "to": p.To},
+			Data:        events.AssetTransferData{AssetID: p.AssetID, From: ctx.EffectiveSender, To: p.To}.Map(),
 		})
 	}
 	return nil

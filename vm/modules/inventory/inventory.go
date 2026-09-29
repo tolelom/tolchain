@@ -66,7 +66,7 @@ func handleEquipItem(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventItemEquipped,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"asset_id": p.AssetID, "slot": p.Slot, "owner": ctx.EffectiveSender},
+			Data:        events.ItemEquippedData{AssetID: p.AssetID, Slot: p.Slot, Owner: ctx.EffectiveSender}.Map(),
 		})
 	}
 	return nil
@@ -121,7 +121,7 @@ func handleUnequipItem(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventItemUnequipped,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"asset_id": p.AssetID, "owner": ctx.EffectiveSender},
+			Data:        events.ItemUnequippedData{AssetID: p.AssetID, Owner: ctx.EffectiveSender}.Map(),
 		})
 	}
 	return nil
