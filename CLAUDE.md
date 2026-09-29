@@ -63,7 +63,7 @@ wallet/             # 키 생성, AES-GCM 키스토어, 트랜잭션 빌더
 
 ### VM — 플러거블 모듈 아키텍처
 
-7개 모듈이 `init()` 블랭크 임포트로 자동 등록:
+모듈은 `init()` 등록과 블랭크 임포트로 붙는다. 등록 코드(`register.gen.go`)와 블랭크 임포트(`cmd/node/modules.gen.go`)는 `design/tolchain.yaml`에서 `daemok gen`으로 생성한다:
 
 | 모듈 | 트랜잭션 타입 | 역할 |
 |------|-------------|------|
@@ -117,6 +117,10 @@ wallet/             # 키 생성, AES-GCM 키스토어, 트랜잭션 빌더
 - `GET /metrics` — Prometheus 메트릭
 
 Rate Limit: 토큰 버킷 100 req/s, 버스트 200 (IP당)
+
+### 설계 파일 (daemok)
+
+`design/tolchain.yaml`이 tx 타입, 핸들러 등록, 이벤트 타입과 payload, 블록 생성·적용 흐름(`produce_block`, `apply_block`)의 기준이다. `*.gen.go`는 손으로 고치지 않고 설계를 고친 뒤 `daemok gen`으로 다시 만든다. `daemok check`는 설계 검사, import 대조, 생성 파일 최신 여부를 본다. 흐름의 단계 본문은 `consensus/produce_block.go`, `network/apply_block.go`에 손으로 쓴다.
 
 ### 이벤트 시스템
 
