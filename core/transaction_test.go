@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/tolelom/tolchain/crypto"
@@ -83,6 +84,7 @@ func TestTransaction_Hash_DifferentForDifferentPayloads(t *testing.T) {
 	pubHex := pub.Hex()
 	tx1, _ := NewTransaction("test", TxTransfer, pubHex, 0, 0, TransferPayload{To: pubHex, Amount: 1})
 	tx2, _ := NewTransaction("test", TxTransfer, pubHex, 0, 0, TransferPayload{To: pubHex, Amount: 2})
+	tx2.Timestamp = tx1.Timestamp // 비교하려는 필드만 다르게
 
 	if tx1.Hash() == tx2.Hash() {
 		t.Fatal("Different payloads should produce different hashes")
@@ -94,24 +96,39 @@ func TestTransaction_ChainID_DifferentHash(t *testing.T) {
 	pubHex := pub.Hex()
 	tx1, _ := NewTransaction("chain-a", TxTransfer, pubHex, 0, 0, TransferPayload{To: pubHex, Amount: 1})
 	tx2, _ := NewTransaction("chain-b", TxTransfer, pubHex, 0, 0, TransferPayload{To: pubHex, Amount: 1})
+	tx2.Timestamp = tx1.Timestamp // 비교하려는 필드만 다르게
 
 	if tx1.Hash() == tx2.Hash() {
 		t.Fatal("Different ChainIDs should produce different hashes")
 	}
 }
 
+// NewTransaction은 Timestamp를 호출 시각으로 채우므로, 해시를 비교하는 테스트는
+// Timestamp를 맞춰 비교하려는 필드만 다르게 한다.
 func TestHash_OnBehalfOf_BackwardCompatible(t *testing.T) {
 	tx1, _ := NewTransaction("chain", TxTransfer, "aabb", 0, 0, TransferPayload{To: "ccdd", Amount: 100})
-	tx2, _ := NewTransaction("chain", TxTransfer, "aabb", 0, 0, TransferPayload{To: "ccdd", Amount: 100})
-	tx2.OnBehalfOf = ""
-	if tx1.Hash() != tx2.Hash() {
+	// OnBehalfOf 필드가 생기기 전의 서명 본문과 같은 해시여야 한다.
+	legacy := struct {
+		ChainID   string          `json:"chain_id"`
+		Type      TxType          `json:"type"`
+		From      string          `json:"from"`
+		Nonce     uint64          `json:"nonce"`
+		Fee       uint64          `json:"fee"`
+		Timestamp int64           `json:"timestamp"`
+		Payload   json.RawMessage `json:"payload"`
+	}{tx1.ChainID, tx1.Type, tx1.From, tx1.Nonce, tx1.Fee, tx1.Timestamp, tx1.Payload}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tx1.Hash() != crypto.Hash(data) {
 		t.Error("empty OnBehalfOf changed the hash")
 	}
 }
 
 func TestHash_OnBehalfOf_ChangesHash(t *testing.T) {
 	tx1, _ := NewTransaction("chain", TxTransfer, "aabb", 0, 0, TransferPayload{To: "ccdd", Amount: 100})
-	tx2, _ := NewTransaction("chain", TxTransfer, "aabb", 0, 0, TransferPayload{To: "ccdd", Amount: 100})
+	tx2 := *tx1
 	tx2.OnBehalfOf = "eeff1122"
 	if tx1.Hash() == tx2.Hash() {
 		t.Error("OnBehalfOf should change the hash")
