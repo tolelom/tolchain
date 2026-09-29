@@ -89,7 +89,6 @@ enums:
 
 consts:
   max_block_txs: { gen: false, in: config, type: int, value: 500, go: { name: DefaultMaxBlockTxs } }
-  max_tx_age:    { gen: false, in: config, type: duration, value: 1h, go: { name: MaxTxAge } }
 
 errors:
   ErrNotFound:            { gen: false, in: core, message: "not found" }
