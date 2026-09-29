@@ -49,7 +49,7 @@ func handleRegisterTemplate(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventTemplateRegistered,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"template_id": p.ID, "name": p.Name},
+			Data:        events.TemplateRegisteredData{TemplateID: p.ID, Name: p.Name}.Map(),
 		})
 	}
 	return nil

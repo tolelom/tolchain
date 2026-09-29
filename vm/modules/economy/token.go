@@ -60,11 +60,11 @@ func handleTransfer(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventTokenTransfer,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data: map[string]any{
-				"from":   ctx.EffectiveSender,
-				"to":     p.To,
-				"amount": p.Amount,
-			},
+			Data: events.TokenTransferData{
+				From:   ctx.EffectiveSender,
+				To:     p.To,
+				Amount: p.Amount,
+			}.Map(),
 		})
 	}
 	return nil

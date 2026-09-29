@@ -98,7 +98,7 @@ func handleGrantReward(ctx *vm.Context, payload json.RawMessage) error {
 				Type:        events.EventAssetMinted,
 				TxID:        ctx.Tx.ID,
 				BlockHeight: ctx.Block.Header.Height,
-				Data:        map[string]any{"asset_id": assetID, "template_id": mintP.TemplateID, "owner": p.Recipient},
+				Data:        events.AssetMintedData{AssetID: assetID, TemplateID: mintP.TemplateID, Owner: p.Recipient}.Map(),
 			})
 		}
 	}
@@ -108,7 +108,7 @@ func handleGrantReward(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventRewardGranted,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data:        map[string]any{"recipient": p.Recipient, "token_amount": p.TokenAmount, "asset_count": len(p.Assets)},
+			Data:        events.RewardGrantedData{Recipient: p.Recipient, TokenAmount: p.TokenAmount, AssetCount: len(p.Assets)}.Map(),
 		})
 	}
 	return nil

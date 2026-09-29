@@ -47,12 +47,12 @@ func handleGrantDelegation(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventDelegationGranted,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data: map[string]any{
-				"granter":     ctx.Tx.From,
-				"grantee":     p.Grantee,
-				"allow_types": p.AllowTypes,
-				"expires_at":  p.ExpiresAt,
-			},
+			Data: events.DelegationGrantedData{
+				Granter:    ctx.Tx.From,
+				Grantee:    p.Grantee,
+				AllowTypes: p.AllowTypes,
+				ExpiresAt:  p.ExpiresAt,
+			}.Map(),
 		})
 	}
 	return nil
@@ -78,10 +78,10 @@ func handleRevokeDelegation(ctx *vm.Context, payload json.RawMessage) error {
 			Type:        events.EventDelegationRevoked,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
-			Data: map[string]any{
-				"granter": ctx.Tx.From,
-				"grantee": p.Grantee,
-			},
+			Data: events.DelegationRevokedData{
+				Granter: ctx.Tx.From,
+				Grantee: p.Grantee,
+			}.Map(),
 		})
 	}
 	return nil
