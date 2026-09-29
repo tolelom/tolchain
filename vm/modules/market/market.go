@@ -11,12 +11,6 @@ import (
 	"github.com/tolelom/tolchain/vm"
 )
 
-func init() {
-	vm.Register(core.TxListMarket, handleListMarket)
-	vm.Register(core.TxBuyMarket, handleBuyMarket)
-	vm.Register(core.TxCancelListing, handleCancelListing)
-}
-
 func handleListMarket(ctx *vm.Context, payload json.RawMessage) error {
 	var p core.ListMarketPayload
 	if err := json.Unmarshal(payload, &p); err != nil {

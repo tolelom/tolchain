@@ -12,10 +12,6 @@ import (
 	"github.com/tolelom/tolchain/vm/modules/asset"
 )
 
-func init() {
-	vm.Register(core.TxGrantReward, handleGrantReward)
-}
-
 // NOTE: Asset properties are validated against the template schema via
 // asset.ValidateSchema. Max asset count is capped at 50. The operator
 // signature requirement provides additional access control.

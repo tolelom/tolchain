@@ -12,12 +12,6 @@ import (
 	"github.com/tolelom/tolchain/vm"
 )
 
-func init() {
-	vm.Register(core.TxSessionOpen, handleSessionOpen)
-	vm.Register(core.TxSessionResult, handleSessionResult)
-	vm.Register(core.TxSessionCancel, handleSessionCancel)
-}
-
 func handleSessionOpen(ctx *vm.Context, payload json.RawMessage) error {
 	var p core.SessionOpenPayload
 	if err := json.Unmarshal(payload, &p); err != nil {

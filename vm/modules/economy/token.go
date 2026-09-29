@@ -9,10 +9,6 @@ import (
 	"github.com/tolelom/tolchain/vm"
 )
 
-func init() {
-	vm.Register(core.TxTransfer, handleTransfer)
-}
-
 func handleTransfer(ctx *vm.Context, payload json.RawMessage) error {
 	var p core.TransferPayload
 	if err := json.Unmarshal(payload, &p); err != nil {

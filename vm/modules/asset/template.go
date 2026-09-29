@@ -10,10 +10,6 @@ import (
 	"github.com/tolelom/tolchain/vm"
 )
 
-func init() {
-	vm.Register(core.TxRegisterTemplate, handleRegisterTemplate)
-}
-
 func handleRegisterTemplate(ctx *vm.Context, payload json.RawMessage) error {
 	var p core.RegisterTemplatePayload
 	if err := json.Unmarshal(payload, &p); err != nil {
@@ -50,7 +46,7 @@ func handleRegisterTemplate(ctx *vm.Context, payload json.RawMessage) error {
 
 	if ctx.Emitter != nil {
 		ctx.Emitter.Emit(events.Event{
-			Type:        events.EventTemplateReg,
+			Type:        events.EventTemplateRegistered,
 			TxID:        ctx.Tx.ID,
 			BlockHeight: ctx.Block.Header.Height,
 			Data:        map[string]any{"template_id": p.ID, "name": p.Name},

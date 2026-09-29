@@ -11,12 +11,6 @@ import (
 	"github.com/tolelom/tolchain/vm"
 )
 
-func init() {
-	vm.Register(core.TxMintAsset, handleMintAsset)
-	vm.Register(core.TxBurnAsset, handleBurnAsset)
-	vm.Register(core.TxTransferAsset, handleTransferAsset)
-}
-
 func handleMintAsset(ctx *vm.Context, payload json.RawMessage) error {
 	var p core.MintAssetPayload
 	if err := json.Unmarshal(payload, &p); err != nil {

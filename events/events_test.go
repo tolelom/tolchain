@@ -138,14 +138,14 @@ func TestBuffer_FlushClearsBuffer(t *testing.T) {
 	}
 }
 
-// TestAllEventTypes_CompleteAndUnique guards against new event types being
-// forgotten in AllEventTypes (the SSE broker subscribes from this list).
-func TestAllEventTypes_CompleteAndUnique(t *testing.T) {
-	all := AllEventTypes()
+// TestEventTypeValues_CompleteAndUnique checks the generated event type list
+// (design/tolchain.yaml → event_type.gen.go) that the SSE broker subscribes from.
+func TestEventTypeValues_CompleteAndUnique(t *testing.T) {
+	all := EventTypeValues()
 
 	const wantCount = 20
 	if len(all) != wantCount {
-		t.Errorf("AllEventTypes() has %d entries, want %d — update it when adding event types", len(all), wantCount)
+		t.Errorf("EventTypeValues() has %d entries, want %d — update it when adding event types", len(all), wantCount)
 	}
 
 	seen := make(map[EventType]bool, len(all))
@@ -158,7 +158,7 @@ func TestAllEventTypes_CompleteAndUnique(t *testing.T) {
 
 	for _, required := range []EventType{EventDelegationGranted, EventDelegationRevoked} {
 		if !seen[required] {
-			t.Errorf("AllEventTypes() missing %q", required)
+			t.Errorf("EventTypeValues() missing %q", required)
 		}
 	}
 }
