@@ -38,7 +38,7 @@ func NewSSEBroker(emitter *events.Emitter, authToken string, sseBufferSize int) 
 		authToken:    authToken,
 		eventBufSize: sseBufferSize,
 	}
-	for _, t := range events.AllEventTypes() {
+	for _, t := range events.EventTypeValues() {
 		typ := t
 		emitter.Subscribe(typ, func(ev events.Event) {
 			b.broadcast(ev)

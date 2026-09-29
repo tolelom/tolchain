@@ -5,59 +5,8 @@ import (
 	"sync"
 )
 
-// EventType labels what happened.
-type EventType string
-
-const (
-	EventBlockCommit   EventType = "block_commit"
-	EventTxExecuted    EventType = "tx_executed"
-	EventTokenTransfer EventType = "token_transfer"
-	EventAssetMinted   EventType = "asset_minted"
-	EventAssetBurned   EventType = "asset_burned"
-	EventAssetTransfer EventType = "asset_transfer"
-	EventTemplateReg   EventType = "template_registered"
-	EventSessionOpen   EventType = "session_open"
-	EventSessionClose  EventType = "session_close"
-	EventMarketList    EventType = "market_list"
-	EventMarketBuy     EventType = "market_buy"
-	EventMarketCancel  EventType = "market_cancel"
-	EventSessionCancel   EventType = "session_cancel"
-	EventItemEquipped    EventType = "item_equipped"
-	EventItemUnequipped  EventType = "item_unequipped"
-	EventRewardGranted   EventType = "reward_granted"
-	EventRandomCommit    EventType = "random_commit"
-	EventRandomReveal    EventType = "random_reveal"
-	EventDelegationGranted EventType = "delegation_granted"
-	EventDelegationRevoked EventType = "delegation_revoked"
-)
-
-// AllEventTypes returns every event type defined by this package. Keep this
-// list in sync with the constants above; consumers that need to subscribe to
-// everything (e.g. the SSE broker) must use this instead of their own list.
-func AllEventTypes() []EventType {
-	return []EventType{
-		EventBlockCommit,
-		EventTxExecuted,
-		EventTokenTransfer,
-		EventAssetMinted,
-		EventAssetBurned,
-		EventAssetTransfer,
-		EventTemplateReg,
-		EventSessionOpen,
-		EventSessionClose,
-		EventMarketList,
-		EventMarketBuy,
-		EventMarketCancel,
-		EventSessionCancel,
-		EventItemEquipped,
-		EventItemUnequipped,
-		EventRewardGranted,
-		EventRandomCommit,
-		EventRandomReveal,
-		EventDelegationGranted,
-		EventDelegationRevoked,
-	}
-}
+// EventType과 그 상수, EventTypeValues는 설계(design/tolchain.yaml)에서 생성한다: event_type.gen.go
+// 이벤트별 Data의 모양은 chain_event.gen.go의 <이벤트>Data가 정한다.
 
 // Event carries a typed payload emitted after a state change.
 type Event struct {

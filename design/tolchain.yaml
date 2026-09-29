@@ -1,0 +1,266 @@
+version: 0.4
+go_module: github.com/tolelom/tolchain
+
+# ── R 요구사항 (예시 값) ──
+requirements:
+  REQ-transfer:    { text: "사용자는 토큰을 다른 주소로 보낼 수 있다", status: active }
+  REQ-reward:      { text: "게임 서버는 보상을 한 트랜잭션으로 모아 지급한다", status: active }
+  REQ-delegation:  { text: "API 서버는 위임받은 범위 안에서 유저 대신 서명한다", status: active }
+  REQ-random:      { text: "게임 난수는 commit-reveal로 조작을 막는다", status: held }
+
+# ── L0 시스템 ──
+system:
+  id: tolchain
+  summary: 게임 특화 PoA 프라이빗 블록체인
+  actors:
+    game_server: { summary: "게임 결과를 서명된 트랜잭션으로 제출" }
+    api_server:  { summary: "커스터디얼 지갑으로 유저 대신 서명" }
+    peer_node:   { summary: "다른 tolchain 노드" }
+    monitoring:  { summary: "Prometheus + Grafana" }
+  interfaces:
+    json_rpc: { protocol: jsonrpc2-http, port: 8545,     used_by: [game_server, api_server] }
+    events:   { protocol: sse,           path: /events,  used_by: [game_server, api_server] }
+    p2p:      { protocol: tcp-lpjson,    port: 30303,    used_by: [peer_node] }
+    metrics:  { protocol: prometheus,    path: /metrics, used_by: [monitoring] }
+
+# ── L1 실행 단위 ──
+executables:
+  node:
+    summary: 검증자 / 풀 노드
+    exposes: [json_rpc, events, p2p, metrics]
+    composes: [config, consensus, rpc, network, storage, indexer, wallet, certgen, vm, tx_modules]
+  genkey: { summary: 검증자 키 생성, composes: [] }
+  backup: { summary: LevelDB 백업, composes: [storage] }
+
+# ── L2 모듈 ──
+tiers: [foundation, domain, persistence, execution, service]
+
+modules:
+  crypto:    { tier: foundation,  summary: "ed25519 서명, SHA-256" }
+  certgen:   { tier: foundation,  summary: "mTLS 인증서 생성", path: crypto/certgen }
+  events:    { tier: foundation,  summary: "이벤트 pub/sub" }
+  metrics:   { tier: foundation,  summary: "Prometheus 지표", implements: [metrics] }
+  core:      { tier: domain,      summary: "Transaction, Block, State, Mempool", depends_on: [crypto, metrics] }
+  storage:   { tier: persistence, summary: "LevelDB + 스냅샷/롤백", depends_on: [core, crypto] }
+  indexer:   { tier: persistence, summary: "owner→assets 보조 인덱스", depends_on: [core, events, storage] }
+  vm:        { tier: execution,   summary: "트랜잭션 실행 엔진", depends_on: [core, crypto, events] }
+  consensus: { tier: service, summary: "PoA 라운드로빈", depends_on: [config, core, crypto, events, metrics, vm] }
+  network:   { tier: service, summary: "TCP P2P", depends_on: [core, events, metrics], implements: [p2p] }
+  rpc:       { tier: service, summary: "JSON-RPC + SSE", depends_on: [core, events, indexer, metrics], implements: [json_rpc, events] }
+  wallet:    { tier: service, summary: "키스토어, Tx 빌더", depends_on: [core, crypto] }
+  config:    { tier: service, summary: "설정, 제네시스, TLS", depends_on: [core] }
+
+groups:
+  tx_modules:
+    tier: execution
+    kind: tx_handler
+    path: vm/modules
+    depends_on: [core, crypto, events, vm]
+    rule: no_sibling_deps
+    members:
+      economy:    { summary: "토큰 전송", handles: [transfer], satisfies: [REQ-transfer] }
+      asset:      { summary: "템플릿, 발행/소각/전송", handles: [mint_asset, burn_asset, transfer_asset, register_template] }
+      market:     { summary: "마켓 등록/구매/취소", handles: [list_market, buy_market, cancel_listing] }
+      session:    { summary: "게임 세션", handles: [session_open, session_result, session_cancel] }
+      inventory:  { summary: "장착 슬롯", handles: [equip_item, unequip_item] }
+      random:     { summary: "commit-reveal 난수", handles: [random_commit, random_reveal], satisfies: [REQ-random] }
+      delegation: { summary: "서명 위임", handles: [grant_delegation, revoke_delegation], satisfies: [REQ-delegation] }
+      reward:
+        summary: "배치 보상 (토큰 + 자산)"
+        handles: [grant_reward]
+        satisfies: [REQ-reward]
+        exceptions:
+          - depends_on: asset
+            reason: "보상 지급 시 자산 스키마 검증 재사용"
+
+# ── L3 타입·계약 ──
+enums:
+  tx_type:
+    in: core
+    go: { type: TxType, prefix: Tx }
+    values: [transfer, mint_asset, burn_asset, transfer_asset, register_template,
+             session_open, session_result, list_market, buy_market, cancel_listing,
+             session_cancel, equip_item, unequip_item, grant_reward,
+             random_commit, random_reveal, grant_delegation, revoke_delegation]
+  event_type:
+    in: events
+    go: { type: EventType, prefix: Event }
+    values: [block_commit, tx_executed, token_transfer, asset_minted, asset_burned, asset_transfer, template_registered, session_open, session_close, market_list, market_buy, market_cancel, session_cancel, item_equipped, item_unequipped, reward_granted, random_commit, random_reveal, delegation_granted, delegation_revoked]
+
+consts:
+  max_block_txs: { gen: false, in: config, type: int, value: 500, go: { name: DefaultMaxBlockTxs } }
+  max_tx_age:    { gen: false, in: config, type: duration, value: 1h, go: { name: MaxTxAge } }
+
+errors:
+  ErrNotFound:            { gen: false, in: core, message: "not found" }
+  ErrInsufficientBalance: { gen: false, in: core, message: "insufficient balance" }
+  ErrInvalidNonce:        { gen: false, in: core, message: "invalid nonce" }
+  ErrBalanceOverflow:     { gen: false, in: core, message: "balance overflow" }
+  ErrNonceOverflow:       { gen: false, in: core, message: "nonce overflow" }
+  ErrAlreadyExists:       { gen: false, in: core, message: "already exists" }
+  ErrUnauthorized:        { gen: false, in: core, message: "unauthorized" }
+
+types:
+  transfer_payload:
+    gen: false
+    in: core
+    fields: { to: address, amount: uint64 }
+
+handler_kinds:
+  tx_handler:
+    gen: false
+    in: vm
+    go: { name: Handler, register: Register }
+    params: { ctx: "*Context", payload: json.RawMessage }
+    returns: [error]
+    key: tx_type
+
+event_kinds:
+  chain_event: { in: events, key: event_type, encoding: map, subscribers: [rpc] }
+
+events:
+  block_commit:
+    kind: chain_event
+    publishers: [consensus]
+    data: { hash: string, txs: int, block: any }
+  tx_executed:
+    kind: chain_event
+    publishers: [vm]
+    subscribers: [indexer]
+    data: { type: string, from: string, success: bool, error: string }
+  token_transfer:
+    kind: chain_event
+    publishers: [economy]
+    data: { from: string, to: string, amount: uint64 }
+  asset_minted:
+    kind: chain_event
+    publishers: [asset, reward]
+    subscribers: [indexer]
+    data: { asset_id: string, template_id: string, owner: string }
+  asset_burned:
+    kind: chain_event
+    publishers: [asset]
+    subscribers: [indexer]
+    data: { asset_id: string, owner: string }
+  asset_transfer:
+    kind: chain_event
+    publishers: [asset]
+    subscribers: [indexer]
+    data: { asset_id: string, from: string, to: string }
+  template_registered:
+    kind: chain_event
+    publishers: [asset]
+    data: { template_id: string, name: string }
+  session_open:
+    kind: chain_event
+    publishers: [session]
+    subscribers: [indexer]
+    data: { session_id: string, game_id: string, players: { type: string, many: true } }
+  session_close:
+    kind: chain_event
+    publishers: [session]
+    data: { session_id: string }
+  market_list:
+    kind: chain_event
+    publishers: [market]
+    subscribers: [indexer]
+    data: { listing_id: string, asset_id: string, price: uint64 }
+  market_buy:
+    kind: chain_event
+    publishers: [market]
+    subscribers: [indexer]
+    data: { listing_id: string, asset_id: string, buyer: string, seller: string, price: uint64 }
+  market_cancel:
+    kind: chain_event
+    publishers: [market]
+    subscribers: [indexer]
+    data: { listing_id: string, asset_id: string, seller: string }
+  session_cancel:
+    kind: chain_event
+    publishers: [session]
+    data: { session_id: string }
+  item_equipped:
+    kind: chain_event
+    publishers: [inventory]
+    data: { asset_id: string, slot: string, owner: string }
+  item_unequipped:
+    kind: chain_event
+    publishers: [inventory]
+    data: { asset_id: string, owner: string }
+  reward_granted:
+    kind: chain_event
+    publishers: [reward]
+    data: { recipient: string, token_amount: uint64, asset_count: int }
+  random_commit:
+    kind: chain_event
+    publishers: [random]
+    data: { commit_id: string, committer: string }
+  random_reveal:
+    kind: chain_event
+    publishers: [random]
+    data: { commit_id: string, result: string }
+  delegation_granted:
+    kind: chain_event
+    publishers: [delegation]
+    data: { granter: string, grantee: string, allow_types: { type: string, many: true }, expires_at: int64 }
+  delegation_revoked:
+    kind: chain_event
+    publishers: [delegation]
+    data: { granter: string, grantee: string }
+
+# ── L4 함수 계약 ──
+funcs:
+  handle_transfer:
+    gen: false
+    in: economy
+    kind: tx_handler
+    handles: transfer
+    satisfies: [REQ-transfer]
+    errors: [ErrInsufficientBalance, ErrUnauthorized, ErrBalanceOverflow]
+    cases:
+      - { name: "금액 0",         given: { amount: 0 },                         error: invalid }
+      - { name: "잔액 부족",      given: { balance: 5, amount: 10 },            error: ErrInsufficientBalance }
+      - { name: "위임 한도 초과", given: { delegated_max: 5, amount: 10 },      error: ErrUnauthorized }
+      - { name: "정상 이체",      given: { balance: 10, amount: 3 },            expect: { from: 7, to: 3 } }
+
+
+flows:
+  produce_block:
+    in: consensus
+    summary: "제안자가 블록을 만들어 실행하고 저장한 뒤 이벤트를 내보낸다"
+    steps:
+      - { id: check_proposer }
+      - { id: select_txs }
+      - { id: lock, undo: unlock }
+      - { id: read_tip }
+      - { id: snapshot, undo: revert }
+      - { id: buffer_events, undo: discard_events }
+      - { id: execute_txs, summary: "실패한 tx는 건너뛴다" }
+      - { id: restore_emitter }
+      - { id: compute_root }
+      - { id: sign }
+      - { id: validate }
+      - { id: add_block }
+      - { id: commit_state, commit: true, fatal: true }
+      - { id: unlock }
+      - { id: flush_events }
+      - { id: emit_block_commit, emits: [block_commit] }
+      - { id: remove_from_mempool }
+      - { id: record_metrics }
+  apply_block:
+    in: network
+    summary: "피어에게 받은 블록을 검증하고 실행해 저장한다"
+    steps:
+      - { id: validate_block }
+      - { id: lock, undo: unlock }
+      - { id: snapshot, undo: revert }
+      - { id: buffer_events, undo: discard_events }
+      - { id: execute_block }
+      - { id: restore_emitter }
+      - { id: compute_root }
+      - { id: check_root }
+      - { id: add_block }
+      - { id: commit_state, commit: true, fatal: true }
+      - { id: flush_events }
+      - { id: unlock }
+      - { id: remove_from_mempool }

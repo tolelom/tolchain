@@ -9,11 +9,6 @@ import (
 	"github.com/tolelom/tolchain/vm"
 )
 
-func init() {
-	vm.Register(core.TxGrantDelegation, handleGrantDelegation)
-	vm.Register(core.TxRevokeDelegation, handleRevokeDelegation)
-}
-
 func handleGrantDelegation(ctx *vm.Context, payload json.RawMessage) error {
 	var p core.GrantDelegationPayload
 	if err := json.Unmarshal(payload, &p); err != nil {

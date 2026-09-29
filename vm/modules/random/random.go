@@ -12,11 +12,6 @@ import (
 	"github.com/tolelom/tolchain/vm"
 )
 
-func init() {
-	vm.Register(core.TxRandomCommit, handleRandomCommit)
-	vm.Register(core.TxRandomReveal, handleRandomReveal)
-}
-
 func handleRandomCommit(ctx *vm.Context, payload json.RawMessage) error {
 	if err := vm.RequireOperator(ctx); err != nil {
 		return err

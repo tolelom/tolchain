@@ -9,29 +9,7 @@ import (
 	"github.com/tolelom/tolchain/crypto"
 )
 
-// TxType identifies the kind of operation a transaction performs.
-type TxType string
-
-const (
-	TxTransfer         TxType = "transfer"
-	TxMintAsset        TxType = "mint_asset"
-	TxBurnAsset        TxType = "burn_asset"
-	TxTransferAsset    TxType = "transfer_asset"
-	TxRegisterTemplate TxType = "register_template"
-	TxSessionOpen      TxType = "session_open"
-	TxSessionResult    TxType = "session_result"
-	TxListMarket       TxType = "list_market"
-	TxBuyMarket        TxType = "buy_market"
-	TxCancelListing    TxType = "cancel_listing"
-	TxSessionCancel    TxType = "session_cancel"
-	TxEquipItem        TxType = "equip_item"
-	TxUnequipItem      TxType = "unequip_item"
-	TxGrantReward      TxType = "grant_reward"
-	TxRandomCommit     TxType = "random_commit"
-	TxRandomReveal     TxType = "random_reveal"
-	TxGrantDelegation  TxType = "grant_delegation"
-	TxRevokeDelegation TxType = "revoke_delegation"
-)
+// TxType과 그 상수는 설계(design/tolchain.yaml)에서 생성한다: tx_type.gen.go
 
 // Transaction is the atomic unit of work on the chain.
 // From holds the sender's full hex-encoded ed25519 public key (64 chars).

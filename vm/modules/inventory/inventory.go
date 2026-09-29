@@ -10,11 +10,6 @@ import (
 	"github.com/tolelom/tolchain/vm"
 )
 
-func init() {
-	vm.Register(core.TxEquipItem, handleEquipItem)
-	vm.Register(core.TxUnequipItem, handleUnequipItem)
-}
-
 func handleEquipItem(ctx *vm.Context, payload json.RawMessage) error {
 	var p core.EquipItemPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
