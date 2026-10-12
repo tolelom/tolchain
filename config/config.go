@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/tolelom/tolchain/core"
 )
 
 const (
@@ -21,6 +23,11 @@ const (
 	MaxBlockTxsUpperBound = 10000
 	// DefaultLogLevel is the default structured logging level.
 	DefaultLogLevel = "info"
+	// MinPruneKeepBlocks is the smallest non-zero prune_keep_blocks. A random
+	// reveal reads the hash of a block up to RandomTargetDelay+RandomRevealWindow
+	// blocks back; pruning it would make the producer reject a valid reveal
+	// that non-pruning nodes accept.
+	MinPruneKeepBlocks = core.RandomTargetDelay + core.RandomRevealWindow
 	// DefaultPruneKeepBlocks is the default number of recent blocks to keep.
 	// 0 means no pruning (keep all blocks).
 	DefaultPruneKeepBlocks = 0
@@ -255,6 +262,9 @@ func (c *Config) Validate() error {
 	}
 	if c.MaxBlockTxs > MaxBlockTxsUpperBound {
 		return fmt.Errorf("max_block_txs must be at most %d, got %d", MaxBlockTxsUpperBound, c.MaxBlockTxs)
+	}
+	if c.PruneKeepBlocks < 0 || (c.PruneKeepBlocks > 0 && c.PruneKeepBlocks < MinPruneKeepBlocks) {
+		return fmt.Errorf("prune_keep_blocks must be 0 (no pruning) or at least %d, got %d", MinPruneKeepBlocks, c.PruneKeepBlocks)
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error", "":

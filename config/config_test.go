@@ -607,3 +607,20 @@ func TestValidate_RPCTrustedProxies_EmptyEntry(t *testing.T) {
 		t.Error("expected Validate to fail for empty entry")
 	}
 }
+
+func TestValidate_PruneKeepBlocks(t *testing.T) {
+	for _, keep := range []int64{0, MinPruneKeepBlocks, MinPruneKeepBlocks + 1} {
+		cfg := validConfig(t)
+		cfg.PruneKeepBlocks = keep
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("prune_keep_blocks %d: %v", keep, err)
+		}
+	}
+	for _, keep := range []int64{-1, 1, MinPruneKeepBlocks - 1} {
+		cfg := validConfig(t)
+		cfg.PruneKeepBlocks = keep
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("prune_keep_blocks %d를 받았다", keep)
+		}
+	}
+}
