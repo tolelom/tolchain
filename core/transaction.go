@@ -195,6 +195,15 @@ type GrantRewardPayload struct {
 	Assets      []MintAssetPayload `json:"assets"`
 }
 
+const (
+	// RandomTargetDelay is the distance from the commit block to the target
+	// block whose hash the random result is bound to.
+	RandomTargetDelay = 2
+	// RandomRevealWindow is the number of blocks after the target block in
+	// which a reveal is accepted.
+	RandomRevealWindow = 100
+)
+
 // RandomCommitPayload commits a hash for the commit-reveal random scheme.
 type RandomCommitPayload struct {
 	CommitID   string `json:"commit_id"`

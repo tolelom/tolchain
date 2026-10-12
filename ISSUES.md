@@ -39,7 +39,8 @@
 - **sync return-on-failure**: ExecuteBlock/AddBlock 실패 시 배치 중단.
 - **세션 중복 플레이어 검증**: handleSessionOpen에서 중복 pubkey 거부.
 - **commit-reveal 최소 간격**: 2블록 간격 강제.
-- **commit-reveal 결과 고정**: 결과를 공개 블록의 PrevHash 대신 커밋 높이+2 블록의 해시에 묶고 공개 기간(100블록)을 둠. 커밋한 쪽이 공개 시점을 골라 결과를 고르던 문제.
+- **commit-reveal 결과 고정**: 결과를 공개 블록의 PrevHash 대신 커밋 높이+2 블록의 해시에 묶고 공개 기간(100블록)을 둠. 커밋한 쪽이 공개 시점을 골라 결과를 고르던 문제. 활성화 높이 없이 규칙을 바꿨으므로 이전 규칙의 `random_reveal`이 든 체인은 재생성해야 한다(재실행하면 결과와 state root가 달라진다).
+- **프루닝과 공개 기간**: `prune_keep_blocks`는 0이거나 102(`core.RandomTargetDelay+RandomRevealWindow`) 이상이어야 한다. 그보다 적으면 블록 생성 노드만 목표 블록을 지워 정상 공개를 거부하고 합의가 갈라진다. `config.Validate`에서 거부.
 - **RPC auth subtle.ConstantTimeCompare**: 타이밍 공격 방지.
 - **피어 ID re-key**: MsgHello 후 선언된 node_id로 재등록.
 - **P2P per-peer rate limit**: 100 msg/s 초과 시 연결 해제.

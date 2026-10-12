@@ -143,6 +143,7 @@ Create `config.json` (or omit for dev defaults):
 | `operators` | — | Game operator keys (empty = no restriction) |
 | `genesis.timestamp` | `1735689600000000000` | Genesis block timestamp (Unix ns). Part of the genesis hash — must be identical on every node |
 | `rpc_auth_token` | — | Bearer token for RPC auth (empty = no auth) |
+| `prune_keep_blocks` | `0` | Keep only the latest N blocks (0 = no pruning). Must be 0 or at least 102, because `random_reveal` reads the hash of a block up to 102 blocks back |
 
 Environment variable: `TOL_PASSWORD` — keystore encryption password.
 
@@ -333,6 +334,11 @@ depend on which block carries the reveal, so the committer cannot pick an
 outcome by timing the reveal. The committer can still withhold the reveal;
 treat a commitment that is unrevealed after H+102 as forfeited.
 ```
+
+This result rule replaced the earlier `hash(secret + PrevHash of the reveal
+block)` without an activation height. A chain that already holds
+`random_reveal` transactions from the old rule must be regenerated: replaying
+it under the new rule yields different results and state roots.
 
 ---
 

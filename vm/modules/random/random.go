@@ -12,13 +12,6 @@ import (
 	"github.com/tolelom/tolchain/vm"
 )
 
-const (
-	// targetDelay는 커밋 블록에서 목표 블록까지의 거리다.
-	targetDelay = 2
-	// revealWindow는 목표 블록 뒤로 공개를 받는 블록 수다. 지나면 그 커밋은 공개할 수 없다.
-	revealWindow = 100
-)
-
 func handleRandomCommit(ctx *vm.Context, payload json.RawMessage) error {
 	if err := vm.RequireOperator(ctx); err != nil {
 		return err
@@ -83,21 +76,21 @@ func handleRandomReveal(ctx *vm.Context, payload json.RawMessage) error {
 		return fmt.Errorf("commitment %q not found: %w", p.CommitID, err)
 	}
 
-	// 결과는 커밋 뒤에 생기는 목표 블록의 해시에 묶는다. 커밋 시점에는 아무도 모르고,
-	// 공개 블록을 골라도 바뀌지 않는다. 공개는 목표 블록 다음부터 revealWindow 블록 안에만 받는다.
-	target := rc.BlockHeight + targetDelay
-	if ctx.Block.Header.Height <= target {
-		return fmt.Errorf("reveal too early: must wait at least %d blocks after commit", targetDelay)
-	}
-	if ctx.Block.Header.Height > target+revealWindow {
-		return fmt.Errorf("reveal expired: window closed at height %d", target+revealWindow)
-	}
-
 	if rc.Revealed {
 		return errors.New("already revealed")
 	}
 	if rc.Committer != ctx.EffectiveSender {
 		return errors.New("only the committer can reveal")
+	}
+
+	// 결과는 커밋 뒤에 생기는 목표 블록의 해시에 묶는다. 커밋 시점에는 아무도 모르고,
+	// 공개 블록을 골라도 바뀌지 않는다. 공개는 목표 블록 다음부터 RandomRevealWindow 블록 안에만 받는다.
+	target := rc.BlockHeight + core.RandomTargetDelay
+	if ctx.Block.Header.Height <= target {
+		return fmt.Errorf("reveal too early: reveal allowed from height %d", target+1)
+	}
+	if ctx.Block.Header.Height > target+core.RandomRevealWindow {
+		return fmt.Errorf("reveal expired: window closed at height %d", target+core.RandomRevealWindow)
 	}
 
 	// Verify: hash(secret) must equal commit_hash.

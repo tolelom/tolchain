@@ -46,7 +46,7 @@ func TestCommitReveal(t *testing.T) {
 		t.Error("should not be revealed yet")
 	}
 
-	// Reveal (must be at least minRevealDelay=2 blocks after commit at height 1)
+	// 커밋 높이 1의 목표 블록 3 다음부터 공개 가능
 	revealBlock := core.NewBlock("test-chain", 4, "prev", operator.PubKey(), nil)
 	revealTx, _ := operator.RandomReveal("test-chain", "drop-001", secret, 1, 0)
 	if err := exec.ExecuteTx(revealBlock, revealTx); err != nil {
@@ -79,7 +79,7 @@ func TestRevealWrongSecret(t *testing.T) {
 	commitTx, _ := operator.RandomCommit("test-chain", "drop-002", commitHash, 0, 0)
 	_ = exec.ExecuteTx(block, commitTx)
 
-	// Wrong secret (reveal at height 4 to satisfy minRevealDelay)
+	// Wrong secret (목표 블록 3 다음인 높이 4에서 공개)
 	revealBlock := core.NewBlock("test-chain", 4, "prev", operator.PubKey(), nil)
 	revealTx, _ := operator.RandomReveal("test-chain", "drop-002", "wrong-secret", 1, 0)
 	if err := exec.ExecuteTx(revealBlock, revealTx); err == nil {

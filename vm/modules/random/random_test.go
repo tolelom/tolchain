@@ -3,6 +3,7 @@ package random
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -151,7 +152,7 @@ func TestRandomReveal_Success(t *testing.T) {
 	ctx := newCtx(t, state, pubHex)
 	ctx.Tx.Type = core.TxRandomReveal
 	ctx.Block.Header.PrevHash = prevHash
-	ctx.Block.Header.Height = 5 // must be > BlockHeight + minRevealDelay (0 + 2)
+	ctx.Block.Header.Height = 5 // 목표 블록 0+2 다음부터 공개 가능
 
 	payload, _ := json.Marshal(core.RandomRevealPayload{CommitID: "c1", Secret: secret})
 
@@ -212,21 +213,31 @@ func TestRandomReveal_ResultIndependentOfRevealBlock(t *testing.T) {
 	}
 }
 
-func TestRandomReveal_Window(t *testing.T) {
-	hashes := map[int64]string{2: "target-hash"}
-	// 목표 블록 2, 마감 2+100
-	if _, err := revealAt(t, 102, "p", hashes); err != nil {
-		t.Fatalf("마감 높이의 공개는 받아야 한다: %v", err)
-	}
-	if _, err := revealAt(t, 103, "p", hashes); err == nil {
-		t.Fatal("마감이 지난 공개를 받았다")
+func wantErr(t *testing.T, err error, sub string) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), sub) {
+		t.Fatalf("오류에 %q가 있어야 한다: %v", sub, err)
 	}
 }
 
-func TestRandomReveal_TargetHashUnavailable(t *testing.T) {
-	if _, err := revealAt(t, 5, "p", map[int64]string{}); err == nil {
-		t.Fatal("목표 블록 해시를 읽지 못했는데 공개를 받았다")
+func TestRandomReveal_Window(t *testing.T) {
+	hashes := map[int64]string{2: "target-hash"}
+	// 목표 블록 2, 공개는 3부터 2+100까지
+	_, err := revealAt(t, 2, "p", hashes)
+	wantErr(t, err, "reveal allowed from height 3")
+	if _, err := revealAt(t, 3, "p", hashes); err != nil {
+		t.Fatalf("목표 블록 다음 높이의 공개는 받아야 한다: %v", err)
 	}
+	if _, err := revealAt(t, 102, "p", hashes); err != nil {
+		t.Fatalf("마감 높이의 공개는 받아야 한다: %v", err)
+	}
+	_, err = revealAt(t, 103, "p", hashes)
+	wantErr(t, err, "reveal expired")
+}
+
+func TestRandomReveal_TargetHashUnavailable(t *testing.T) {
+	_, err := revealAt(t, 5, "p", map[int64]string{})
+	wantErr(t, err, "target block 2")
 	state := testutil.NewStateDB()
 	_, pub, _ := crypto.GenerateKeyPair()
 	_ = state.SetRandomCommitment(&core.RandomCommitment{ID: "c1", Committer: pub.Hex(), CommitHash: crypto.Hash([]byte("s"))})
@@ -234,9 +245,7 @@ func TestRandomReveal_TargetHashUnavailable(t *testing.T) {
 	ctx.Block.Header.Height = 5
 	ctx.BlockHash = nil
 	payload, _ := json.Marshal(core.RandomRevealPayload{CommitID: "c1", Secret: "s"})
-	if err := handleRandomReveal(ctx, payload); err == nil {
-		t.Fatal("블록 해시 조회가 없는데 공개를 받았다")
-	}
+	wantErr(t, handleRandomReveal(ctx, payload), "not configured")
 }
 
 func TestRandomReveal_WrongSecret(t *testing.T) {
@@ -273,12 +282,12 @@ func TestRandomReveal_AlreadyRevealed(t *testing.T) {
 		Revealed:   true,
 	})
 
+	// 공개 기간이 지난 높이에서도 이미 공개됐다는 오류가 먼저 나온다.
 	ctx := newCtx(t, state, pubHex)
+	ctx.Block.Header.Height = 500
 	payload, _ := json.Marshal(core.RandomRevealPayload{CommitID: "c1", Secret: "anything"})
 
-	if err := handleRandomReveal(ctx, payload); err == nil {
-		t.Fatal("expected error for already revealed commitment")
-	}
+	wantErr(t, handleRandomReveal(ctx, payload), "already revealed")
 }
 
 func TestRandomReveal_NonCommitter(t *testing.T) {
@@ -389,7 +398,7 @@ func TestRandomReveal_NilEmitter(t *testing.T) {
 	ctx := newCtx(t, state, pubHex)
 	ctx.Emitter = nil
 	ctx.Tx.Type = core.TxRandomReveal
-	ctx.Block.Header.Height = 5 // must be > BlockHeight + minRevealDelay (0 + 2)
+	ctx.Block.Header.Height = 5 // 목표 블록 0+2 다음부터 공개 가능
 
 	payload, _ := json.Marshal(core.RandomRevealPayload{CommitID: "c_ne_r", Secret: secret})
 
