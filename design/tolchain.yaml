@@ -1,4 +1,4 @@
-version: 0.4
+version: 0.5
 go_module: github.com/tolelom/tolchain
 
 # ── R 요구사항 (예시 값) ──
