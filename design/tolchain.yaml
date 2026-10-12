@@ -6,7 +6,7 @@ requirements:
   REQ-transfer:    { text: "사용자는 토큰을 다른 주소로 보낼 수 있다", status: active }
   REQ-reward:      { text: "게임 서버는 보상을 한 트랜잭션으로 모아 지급한다", status: active }
   REQ-delegation:  { text: "API 서버는 위임받은 범위 안에서 유저 대신 서명한다", status: active }
-  REQ-random:      { text: "게임 난수는 commit-reveal로 조작을 막는다", status: held }
+  REQ-random:      { text: "게임 난수는 commit-reveal로 조작을 막는다", status: active }
 
 # ── L0 시스템 ──
 system:
