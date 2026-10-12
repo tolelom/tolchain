@@ -20,6 +20,8 @@ type Context struct {
 	Operators       map[string]bool // operator pubkeys; nil or empty → no restrictions
 	MaxTotalSupply  uint64          // 0 → unlimited; >0 → hard cap on total minted tokens
 	EffectiveSender string          // tx.From if direct, tx.OnBehalfOf if delegated
+	// BlockHash returns the hash of an already committed block. nil if not configured.
+	BlockHash func(height int64) (string, error)
 }
 
 // Executor applies transactions to the state using the global Handler registry.
@@ -29,6 +31,7 @@ type Executor struct {
 	emitter        events.EventEmitter
 	operators      map[string]bool
 	maxTotalSupply uint64
+	blockHash      func(height int64) (string, error)
 }
 
 // NewExecutor creates an Executor with the given state and event emitter.
@@ -48,6 +51,13 @@ func (e *Executor) SetEmitter(em events.EventEmitter) {
 func (e *Executor) SetMaxTotalSupply(cap uint64) {
 	e.mu.Lock()
 	e.maxTotalSupply = cap
+	e.mu.Unlock()
+}
+
+// SetBlockHashes configures how handlers look up committed block hashes by height.
+func (e *Executor) SetBlockHashes(fn func(height int64) (string, error)) {
+	e.mu.Lock()
+	e.blockHash = fn
 	e.mu.Unlock()
 }
 
@@ -237,6 +247,7 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction) error {
 		Operators:       e.operators,
 		MaxTotalSupply:  e.maxTotalSupply,
 		EffectiveSender: effectiveSender,
+		BlockHash:       e.blockHash,
 	}
 	return globalRegistry.Execute(tx.Type, ctx, tx.Payload)
 }

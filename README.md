@@ -38,7 +38,7 @@ the chain provides a tamper-proof, auditable record without requiring a full pub
 - **Game sessions** — stake locking, multi-player consent signatures, reward distribution
 - **Inventory** — slot-based equipment with trade/burn protection while equipped
 - **Batch rewards** — atomic token + asset grants (operator-only)
-- **Commit-reveal randomness** — `hash(secret + prevBlockHash)` for fair drops
+- **Commit-reveal randomness** — `hash(secret + hash of the block 2 after commit)` for fair drops
 - **SSE event streaming** — real-time events with type filtering (21 event types)
 - **IP-based rate limiting** — token bucket (100 req/s, burst 200) per IP
 - **Prometheus metrics** — 15 custom metrics across consensus, mempool, network, RPC
@@ -324,9 +324,14 @@ SSE: market_buy event → both players notified in real-time
 ### Fair Random Drop
 
 ```
-1. Operator: random_commit(hash(secret))
-2. At drop time: random_reveal(secret)
-3. Result = hash(secret + block.PrevHash) → tamper-proof
+1. Operator: random_commit(hash(secret)) at height H
+2. Within blocks H+3 .. H+102: random_reveal(secret)
+3. Result = hash(secret + hash of block H+2)
+
+The target block does not exist at commit time, and the result does not
+depend on which block carries the reveal, so the committer cannot pick an
+outcome by timing the reveal. The committer can still withhold the reveal;
+treat a commitment that is unrevealed after H+102 as forfeited.
 ```
 
 ---

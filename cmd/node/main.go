@@ -172,6 +172,13 @@ func main() {
 	exec := vm.NewExecutor(state, emitter)
 	exec.SetOperators(cfg.Operators)
 	exec.SetMaxTotalSupply(cfg.MaxTotalSupply)
+	exec.SetBlockHashes(func(height int64) (string, error) {
+		b, err := bc.GetBlockByHeight(height)
+		if err != nil {
+			return "", err
+		}
+		return b.Hash, nil
+	})
 
 	// ---- consensus ----
 	poa := consensus.New(cfg, bc, state, mempool, exec, emitter, privKey)

@@ -2,6 +2,7 @@ package random
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -21,7 +22,18 @@ func newCtx(t *testing.T, state core.State, fromPubHex string) *vm.Context {
 		PrevHash:  "abc123",
 	}}
 	tx := &core.Transaction{ID: "tx1", From: fromPubHex, Type: core.TxRandomCommit}
-	return &vm.Context{State: state, Block: block, Tx: tx, Emitter: emitter, EffectiveSender: fromPubHex}
+	return &vm.Context{State: state, Block: block, Tx: tx, Emitter: emitter, EffectiveSender: fromPubHex,
+		BlockHash: blockHashes(map[int64]string{2: "target-hash"})}
+}
+
+// blockHashes는 높이별 블록 해시 표로 Context.BlockHash를 만든다.
+func blockHashes(m map[int64]string) func(int64) (string, error) {
+	return func(h int64) (string, error) {
+		if hash, ok := m[h]; ok {
+			return hash, nil
+		}
+		return "", fmt.Errorf("block %d: %w", h, core.ErrNotFound)
+	}
 }
 
 // ---------- Commit Tests ----------
@@ -155,9 +167,75 @@ func TestRandomReveal_Success(t *testing.T) {
 		t.Errorf("secret = %s, want %s", rc.Secret, secret)
 	}
 
-	expectedResult := crypto.Hash([]byte(secret + prevHash))
+	// 결과는 공개 블록이 아니라 목표 블록(커밋 높이 0 + 2)의 해시에 묶인다.
+	expectedResult := crypto.Hash([]byte(secret + "target-hash"))
 	if rc.Result != expectedResult {
 		t.Errorf("result = %s, want %s", rc.Result, expectedResult)
+	}
+}
+
+// revealAt은 높이 0에 커밋된 c1을 height 블록(직전 해시 prevHash)에서 공개한다.
+func revealAt(t *testing.T, height int64, prevHash string, hashes map[int64]string) (*core.RandomCommitment, error) {
+	t.Helper()
+	state := testutil.NewStateDB()
+	_, pub, _ := crypto.GenerateKeyPair()
+	secret := "my-secret"
+	_ = state.SetRandomCommitment(&core.RandomCommitment{ID: "c1", Committer: pub.Hex(), CommitHash: crypto.Hash([]byte(secret))})
+	ctx := newCtx(t, state, pub.Hex())
+	ctx.Tx.Type = core.TxRandomReveal
+	ctx.Block.Header.Height = height
+	ctx.Block.Header.PrevHash = prevHash
+	if hashes != nil {
+		ctx.BlockHash = blockHashes(hashes)
+	}
+	payload, _ := json.Marshal(core.RandomRevealPayload{CommitID: "c1", Secret: secret})
+	if err := handleRandomReveal(ctx, payload); err != nil {
+		return nil, err
+	}
+	rc, _ := state.GetRandomCommitment("c1")
+	return rc, nil
+}
+
+// 공개 시점을 골라 결과를 바꿀 수 없다: 어느 블록에서 공개해도 결과가 같다.
+func TestRandomReveal_ResultIndependentOfRevealBlock(t *testing.T) {
+	hashes := map[int64]string{2: "target-hash"}
+	early, err := revealAt(t, 3, "hash-2", hashes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	late, err := revealAt(t, 50, "hash-49", hashes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if early.Result != late.Result {
+		t.Fatalf("공개 블록에 따라 결과가 다르다: %s, %s", early.Result, late.Result)
+	}
+}
+
+func TestRandomReveal_Window(t *testing.T) {
+	hashes := map[int64]string{2: "target-hash"}
+	// 목표 블록 2, 마감 2+100
+	if _, err := revealAt(t, 102, "p", hashes); err != nil {
+		t.Fatalf("마감 높이의 공개는 받아야 한다: %v", err)
+	}
+	if _, err := revealAt(t, 103, "p", hashes); err == nil {
+		t.Fatal("마감이 지난 공개를 받았다")
+	}
+}
+
+func TestRandomReveal_TargetHashUnavailable(t *testing.T) {
+	if _, err := revealAt(t, 5, "p", map[int64]string{}); err == nil {
+		t.Fatal("목표 블록 해시를 읽지 못했는데 공개를 받았다")
+	}
+	state := testutil.NewStateDB()
+	_, pub, _ := crypto.GenerateKeyPair()
+	_ = state.SetRandomCommitment(&core.RandomCommitment{ID: "c1", Committer: pub.Hex(), CommitHash: crypto.Hash([]byte("s"))})
+	ctx := newCtx(t, state, pub.Hex())
+	ctx.Block.Header.Height = 5
+	ctx.BlockHash = nil
+	payload, _ := json.Marshal(core.RandomRevealPayload{CommitID: "c1", Secret: "s"})
+	if err := handleRandomReveal(ctx, payload); err == nil {
+		t.Fatal("블록 해시 조회가 없는데 공개를 받았다")
 	}
 }
 

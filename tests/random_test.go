@@ -19,6 +19,12 @@ func TestCommitReveal(t *testing.T) {
 
 	operator, _ := wallet.Generate()
 	exec.SetOperators([]string{operator.PubKey()})
+	exec.SetBlockHashes(func(h int64) (string, error) {
+		if h == 3 {
+			return "target-hash", nil
+		}
+		return "", core.ErrNotFound
+	})
 	_ = state.SetAccount(&core.Account{Address: operator.PubKey(), Balance: 1000})
 
 	block := core.NewBlock("test-chain", 1, "0000", operator.PubKey(), nil)
@@ -51,7 +57,8 @@ func TestCommitReveal(t *testing.T) {
 	if !rc.Revealed {
 		t.Error("should be revealed")
 	}
-	expectedResult := crypto.Hash([]byte(secret + revealBlock.Header.PrevHash))
+	// 커밋 높이 1 + 2 = 목표 블록 3의 해시에 묶인다
+	expectedResult := crypto.Hash([]byte(secret + "target-hash"))
 	if rc.Result != expectedResult {
 		t.Errorf("result: got %s want %s", rc.Result, expectedResult)
 	}
@@ -96,9 +103,12 @@ func TestDoubleReveal(t *testing.T) {
 	commitTx, _ := operator.RandomCommit("test-chain", "drop-003", commitHash, 0, 0)
 	_ = exec.ExecuteTx(block, commitTx)
 
+	exec.SetBlockHashes(func(int64) (string, error) { return "target-hash", nil })
 	revealBlock := core.NewBlock("test-chain", 4, "prev", operator.PubKey(), nil)
 	revealTx, _ := operator.RandomReveal("test-chain", "drop-003", secret, 1, 0)
-	_ = exec.ExecuteTx(revealBlock, revealTx)
+	if err := exec.ExecuteTx(revealBlock, revealTx); err != nil {
+		t.Fatalf("first reveal: %v", err)
+	}
 
 	// Second reveal should fail
 	revealTx2, _ := operator.RandomReveal("test-chain", "drop-003", secret, 2, 0)

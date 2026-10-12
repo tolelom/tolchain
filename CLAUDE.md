@@ -72,7 +72,7 @@ wallet/             # 키 생성, AES-GCM 키스토어, 트랜잭션 빌더
 | **session** | session_open, session_result, session_cancel | 게임 세션 (스테이크 잠금, 다중 플레이어 동의 서명) |
 | **market** | list_market, buy_market, cancel_listing | NFT 마켓플레이스 (장착 아이템 등록 차단) |
 | **inventory** | equip_item, unequip_item | 슬롯 기반 장비 관리 |
-| **random** | random_commit, random_reveal | 커밋-리빌 난수 생성 (`hash(secret + prevBlockHash)`) |
+| **random** | random_commit, random_reveal | 커밋-리빌 난수 생성 (`hash(secret + 목표 블록 해시)`, 목표 블록 = 커밋 높이+2, 공개는 그 뒤 100블록 안) |
 | **reward** | grant_reward | 원자적 토큰 + 자산 일괄 지급 (오퍼레이터 전용) |
 
 **Executor 흐름**: 서명 검증 → 수수료 징수 → 핸들러 디스패치 → 실패 시 스냅샷 롤백
