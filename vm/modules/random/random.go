@@ -12,6 +12,13 @@ import (
 	"github.com/tolelom/tolchain/vm"
 )
 
+const (
+	// targetDelay는 커밋 블록에서 목표 블록까지의 거리다.
+	targetDelay = 2
+	// revealWindow는 목표 블록 뒤로 공개를 받는 블록 수다. 지나면 그 커밋은 공개할 수 없다.
+	revealWindow = 100
+)
+
 func handleRandomCommit(ctx *vm.Context, payload json.RawMessage) error {
 	if err := vm.RequireOperator(ctx); err != nil {
 		return err
@@ -76,9 +83,14 @@ func handleRandomReveal(ctx *vm.Context, payload json.RawMessage) error {
 		return fmt.Errorf("commitment %q not found: %w", p.CommitID, err)
 	}
 
-	const minRevealDelay = 2
-	if ctx.Block.Header.Height <= rc.BlockHeight+minRevealDelay {
-		return fmt.Errorf("reveal too early: must wait at least %d blocks after commit", minRevealDelay)
+	// 결과는 커밋 뒤에 생기는 목표 블록의 해시에 묶는다. 커밋 시점에는 아무도 모르고,
+	// 공개 블록을 골라도 바뀌지 않는다. 공개는 목표 블록 다음부터 revealWindow 블록 안에만 받는다.
+	target := rc.BlockHeight + targetDelay
+	if ctx.Block.Header.Height <= target {
+		return fmt.Errorf("reveal too early: must wait at least %d blocks after commit", targetDelay)
+	}
+	if ctx.Block.Header.Height > target+revealWindow {
+		return fmt.Errorf("reveal expired: window closed at height %d", target+revealWindow)
 	}
 
 	if rc.Revealed {
@@ -94,8 +106,14 @@ func handleRandomReveal(ctx *vm.Context, payload json.RawMessage) error {
 		return errors.New("secret does not match commitment hash")
 	}
 
-	// Compute result: hash(secret + prevBlockHash) for unpredictability.
-	result := crypto.Hash([]byte(p.Secret + ctx.Block.Header.PrevHash))
+	if ctx.BlockHash == nil {
+		return errors.New("block hash lookup not configured")
+	}
+	targetHash, err := ctx.BlockHash(target)
+	if err != nil {
+		return fmt.Errorf("target block %d: %w", target, err)
+	}
+	result := crypto.Hash([]byte(p.Secret + targetHash))
 
 	rc.Revealed = true
 	rc.Secret = p.Secret

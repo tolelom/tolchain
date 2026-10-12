@@ -39,6 +39,7 @@
 - **sync return-on-failure**: ExecuteBlock/AddBlock 실패 시 배치 중단.
 - **세션 중복 플레이어 검증**: handleSessionOpen에서 중복 pubkey 거부.
 - **commit-reveal 최소 간격**: 2블록 간격 강제.
+- **commit-reveal 결과 고정**: 결과를 공개 블록의 PrevHash 대신 커밋 높이+2 블록의 해시에 묶고 공개 기간(100블록)을 둠. 커밋한 쪽이 공개 시점을 골라 결과를 고르던 문제.
 - **RPC auth subtle.ConstantTimeCompare**: 타이밍 공격 방지.
 - **피어 ID re-key**: MsgHello 후 선언된 node_id로 재등록.
 - **P2P per-peer rate limit**: 100 msg/s 초과 시 연결 해제.
