@@ -220,6 +220,7 @@ funcs:
       - { name: "금액 0",         given: { amount: 0 },                         error: invalid }
       - { name: "잔액 부족",      given: { balance: 5, amount: 10 },            error: ErrInsufficientBalance }
       - { name: "위임 한도 초과", given: { delegated_max: 5, amount: 10 },      error: ErrUnauthorized }
+      - { name: "수신 잔액 넘침", given: { balance: 10, to_balance: 18446744073709551615, amount: 1 }, error: ErrBalanceOverflow }
       - { name: "정상 이체",      given: { balance: 10, amount: 3 },            expect: { from: 7, to: 3 } }
 
 
