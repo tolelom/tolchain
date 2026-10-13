@@ -1,0 +1,78 @@
+# daemok init --l3로 옮긴 손으로 쓴 선언이다(gen: false).
+
+consts:
+  default_log_level: { in: config, gen: false, summary: "DefaultLogLevel is the default structured logging level.", type: string, value: "info" }
+  default_p2p_port: { in: config, gen: false, summary: "DefaultP2PPort is the default peer-to-peer listen port.", type: int, value: 30303, go: { name: DefaultP2PPort } }
+  default_prune_keep_blocks: { in: config, gen: false, summary: "DefaultPruneKeepBlocks is the default number of recent blocks to keep.", type: int, value: 0 }
+  default_rpc_port: { in: config, gen: false, summary: "DefaultRPCPort is the default JSON-RPC listen port.", type: int, value: 8545, go: { name: DefaultRPCPort } }
+  genesis_hash: { in: config, gen: false, summary: "GenesisHash is a canonical all-zeros previous hash for the genesis block.", type: string, value: "0000000000000000000000000000000000000000000000000000000000000000" }
+  max_block_txs_upper_bound: { in: config, gen: false, summary: "MaxBlockTxsUpperBound is the hard cap for max_block_txs.", type: int, value: 10000 }
+  random_reveal_window: { in: core, gen: false, summary: "RandomRevealWindow is the number of blocks after the target block in which a reveal is accepted.", type: int, value: 100 }
+  random_target_delay: { in: core, gen: false, summary: "RandomTargetDelay is the distance from the commit block to the target block whose hash the random result is bound to.", type: int, value: 2 }
+  code_internal_error: { in: rpc, gen: false, type: int, value: -32603 }
+  code_invalid_params: { in: rpc, gen: false, type: int, value: -32602 }
+  code_invalid_request: { in: rpc, gen: false, type: int, value: -32600 }
+  code_method_not_found: { in: rpc, gen: false, type: int, value: -32601 }
+  code_parse_error: { in: rpc, gen: false, type: int, value: -32700 }
+  code_rate_limited: { in: rpc, gen: false, summary: "CodeRateLimited is the JSON-RPC error code returned when rate limited.", type: int, value: -32001 }
+  code_unauthorized: { in: rpc, gen: false, type: int, value: -32000 }
+
+enums:
+  msg_type: { in: network, gen: false, summary: "MsgType labels a network message.", values: [hello, tx, block, get_blocks, blocks, ping, pong], go: { prefix: Msg } }
+
+types:
+  options: { in: certgen, gen: false, summary: "Options configures additional Subject Alternative Names for the node cert.", fields: { extra_ips: "[]net.IP", extra_dns: "[]string" } }
+  config: { in: config, gen: false, summary: "Config holds all node configuration.", fields: { node_id: string, data_dir: string, rpc_port: int, p2p_port: int, max_block_txs: int, validators: "[]string", operators: { type: "[]string", optional: true }, genesis: genesis_config, seed_peers: { type: "[]seed_peer", optional: true }, tls: { type: tls_config, optional: true }, rpc_auth_token: string, log_level: string, prune_keep_blocks: int64, max_total_supply: uint64, mempool: mempool_config, network: network_config, rpc: rpc_server_config, consensus: consensus_config } }
+  consensus_config: { in: config, gen: false, summary: "ConsensusConfig controls block production.", fields: { block_interval_sec: int, max_time_drift_sec: int } }
+  genesis_config: { in: config, gen: false, summary: "GenesisConfig describes the chain's initial state.", fields: { chain_id: string, alloc: "map[string]uint64", timestamp: int64 } }
+  mempool_config: { in: config, gen: false, summary: "MempoolConfig controls transaction pool behavior.", fields: { max_size: int, max_tx_age_sec: int, max_future_sec: int } }
+  network_config: { in: config, gen: false, summary: "NetworkConfig controls P2P networking.", fields: { max_peers: int, write_timeout_sec: int, read_timeout_sec: int, max_message_size: int, sync_batch_size: int, max_sync_batch_size: int } }
+  rpc_server_config: { in: config, gen: false, summary: "RPCServerConfig controls JSON-RPC server behavior.", fields: { rate_limit: float64, rate_burst: int, read_timeout_sec: int, write_timeout_sec: int, idle_timeout_sec: int, max_body_size: int64, sse_buffer_size: int, trusted_proxies: { type: "[]string", optional: true } }, go: { name: RPCServerConfig } }
+  seed_peer: { in: config, gen: false, summary: "SeedPeer identifies a remote node to connect to on startup.", fields: { id: string, addr: string } }
+  tls_config: { in: config, gen: false, summary: "TLSConfig holds paths to the PEM files needed for mTLS.", fields: { ca_cert: string, node_cert: string, node_key: string }, go: { name: TLSConfig } }
+  account: { in: core, gen: false, summary: "Account holds a participant's token balance and replay-protection nonce.", fields: { address: string, balance: uint64, nonce: uint64 } }
+  asset: { in: core, gen: false, summary: "Asset is a universal game asset: item, card, character, etc.", fields: { id: string, template_id: string, owner: string, properties: "map[string]any", tradeable: bool, minted_at: int64, active_listing_id: string } }
+  asset_template: { in: core, gen: false, summary: "AssetTemplate defines the schema and rules for a class of assets.", fields: { id: string, name: string, schema: "map[string]any", tradeable: bool, creator: string } }
+  block: { in: core, gen: false, summary: "Block is a collection of transactions with a signed header.", fields: { header: block_header, transactions: "[]*transaction", hash: string, signature: string } }
+  block_header: { in: core, gen: false, summary: "BlockHeader contains the block metadata that is hashed and signed.", fields: { chain_id: string, height: int64, prev_hash: string, state_root: string, tx_root: string, timestamp: int64, proposer: string } }
+  burn_asset_payload: { in: core, gen: false, summary: "BurnAssetPayload permanently destroys an asset.", fields: { asset_id: string } }
+  buy_market_payload: { in: core, gen: false, summary: "BuyMarketPayload purchases an active market listing.", fields: { listing_id: string } }
+  cancel_listing_payload: { in: core, gen: false, summary: "CancelListingPayload cancels an active market listing.", fields: { listing_id: string } }
+  delegation_grant: { in: core, gen: false, summary: "DelegationGrant is the state record for an active delegation.", fields: { granter: string, grantee: string, allow_types: "[]string", expires_at: int64, max_uses: uint64, used_count: uint64, max_amount: uint64, spent_amount: uint64, created_at: int64 } }
+  equip_item_payload: { in: core, gen: false, summary: "EquipItemPayload equips an asset to a named slot.", fields: { asset_id: string, slot: string } }
+  grant_delegation_payload: { in: core, gen: false, summary: "GrantDelegationPayload is the payload for grant_delegation transactions.", fields: { grantee: string, allow_types: "[]string", expires_at: int64, max_uses: uint64, max_amount: uint64 } }
+  grant_reward_payload: { in: core, gen: false, summary: "GrantRewardPayload atomically grants tokens and mints assets.", fields: { recipient: string, token_amount: uint64, assets: "[]mint_asset_payload" } }
+  inventory: { in: core, gen: false, summary: "Inventory tracks a player's equipped item slots.", fields: { owner: string, slots: "map[string]string" } }
+  list_market_payload: { in: core, gen: false, summary: "ListMarketPayload lists an asset for sale.", fields: { asset_id: string, price: uint64 } }
+  market_listing: { in: core, gen: false, summary: "MarketListing is a P2P asset sale offer.", fields: { id: string, asset_id: string, seller: string, price: uint64, active: bool, created_at: int64 } }
+  mint_asset_payload: { in: core, gen: false, summary: "MintAssetPayload mints a new asset from a registered template.", fields: { template_id: string, owner: string, properties: "map[string]any" } }
+  random_commit_payload: { in: core, gen: false, summary: "RandomCommitPayload commits a hash for the commit-reveal random scheme.", fields: { commit_id: string, commit_hash: string } }
+  random_commitment: { in: core, gen: false, summary: "RandomCommitment stores a commit-reveal random number generation request.", fields: { id: string, committer: string, commit_hash: string, block_height: int64, revealed: bool, secret: string, result: string } }
+  random_reveal_payload: { in: core, gen: false, summary: "RandomRevealPayload reveals the secret for a previous commitment.", fields: { commit_id: string, secret: string } }
+  register_template_payload: { in: core, gen: false, summary: "RegisterTemplatePayload defines a new class of game assets.", fields: { id: string, name: string, schema: "map[string]any", tradeable: bool } }
+  revoke_delegation_payload: { in: core, gen: false, summary: "RevokeDelegationPayload is the payload for revoke_delegation transactions.", fields: { grantee: string } }
+  session: { in: core, gen: false, summary: "Session represents an active or completed game match.", fields: { id: string, game_id: string, creator: string, players: "[]string", stakes: uint64, status: string, outcome: "map[string]uint64", created_at: int64, closed_at: int64 } }
+  session_cancel_payload: { in: core, gen: false, summary: "SessionCancelPayload cancels an open session and refunds stakes.", fields: { session_id: string } }
+  session_open_payload: { in: core, gen: false, summary: "SessionOpenPayload opens a new game session and locks stakes.", fields: { session_id: string, game_id: string, players: "[]string", stakes: uint64, signatures: "map[string]string" } }
+  session_result_payload: { in: core, gen: false, summary: "SessionResultPayload closes a session and distributes rewards.", fields: { session_id: string, outcome: "map[string]uint64" } }
+  transaction: { in: core, gen: false, summary: "Transaction is the atomic unit of work on the chain.", fields: { id: string, chain_id: string, type: tx_type, from: string, nonce: uint64, fee: uint64, timestamp: int64, payload: json.RawMessage, signature: string, on_behalf_of: string } }
+  transfer_asset_payload: { in: core, gen: false, summary: "TransferAssetPayload moves an asset to a new owner.", fields: { asset_id: string, to: string } }
+  unequip_item_payload: { in: core, gen: false, summary: "UnequipItemPayload removes an asset from its equipped slot.", fields: { asset_id: string } }
+  event: { in: events, gen: false, summary: "Event carries a typed payload emitted after a state change.", fields: { type: event_type, tx_id: string, block_height: int64, data: "map[string]any" } }
+  paginated_result: { in: indexer, gen: false, summary: "PaginatedResult holds a page of IDs plus total count.", fields: { ids: "[]string", total: int, offset: int, limit: int } }
+  tx_result: { in: indexer, gen: false, summary: "TxResult stores the outcome of a transaction after execution.", fields: { tx_id: string, block_height: int64, success: bool, error: string } }
+  blocks_response: { in: network, gen: false, summary: "BlocksResponse carries a batch of blocks.", fields: { blocks: "[]*block" } }
+  get_blocks_request: { in: network, gen: false, summary: "GetBlocksRequest asks a peer for blocks starting at FromHeight.", fields: { from_height: int64, limit: int } }
+  message: { in: network, gen: false, summary: "Message is the envelope for all P2P communication.", fields: { type: msg_type, payload: json.RawMessage } }
+  peer: { in: network, gen: false, summary: "Peer represents a connected remote node.", fields: { id: string, addr: string } }
+  request: { in: rpc, gen: false, summary: "Request is a JSON-RPC 2.0 request envelope.", fields: { jsonrpc: string, id: any, method: string, params: json.RawMessage } }
+  response: { in: rpc, gen: false, summary: "Response is a JSON-RPC 2.0 response envelope.", fields: { jsonrpc: string, id: any, result: any, error: { type: Error, optional: true } } }
+
+contracts:
+  block_store: { in: core, gen: false, summary: "BlockStore is the persistence interface used by Blockchain.", kind: call, methods: { get_block: { params: { hash: string }, returns: ["*block"], errors: [] }, put_block: { params: { block: "*block" }, errors: [] }, get_block_by_height: { params: { height: int64 }, returns: ["*block"], errors: [] }, put_block_by_height: { params: { height: int64, hash: string }, errors: [] }, get_block_range: { params: { from_height: int64, limit: int }, returns: ["[]*block"], errors: [] }, get_tip: { returns: [string], errors: [] }, set_tip: { params: { hash: string }, errors: [] }, commit_block: { params: { block: "*block" }, errors: [] } } }
+  block_validator: { in: network, gen: false, summary: "BlockValidator validates a block before it is accepted into the chain.", kind: call, methods: { validate_block: { params: { block: "*block" }, errors: [] } } }
+
+funcs:
+  charge_delegation_amount: { in: vm, gen: false, summary: "ChargeDelegationAmount enforces the MaxAmount limit on a delegation grant for tx that move tokens (transfer, grant_reward).", errors: [ErrUnauthorized] }
+  require_operator: { in: vm, gen: false, summary: "RequireOperator returns an error if operators are configured and the transaction sender is not among them.", errors: [ErrUnauthorized] }
+  safe_add: { in: vm, gen: false, summary: "SafeAdd returns a + b, or an error if the result would overflow uint64.", errors: [ErrBalanceOverflow] }
