@@ -36,6 +36,8 @@ func main() {
 	force := flag.Bool("force", false, "with -genkey: overwrite an existing keystore file")
 	genCerts := flag.String("gencerts", "", "generate CA + node TLS certs into the given directory and exit (requires node ID from config)")
 	flag.Parse()
+	cfgExplicit := false
+	flag.Visit(func(f *flag.Flag) { cfgExplicit = cfgExplicit || f.Name == "config" })
 
 	// Read keystore password from environment (not CLI flags — they leak via ps).
 	password := os.Getenv("TOL_PASSWORD")
@@ -71,7 +73,7 @@ func main() {
 
 	// ---- generate certs mode ----
 	if *genCerts != "" {
-		cfgForCerts, err := loadConfig(*cfgPath)
+		cfgForCerts, err := loadConfig(*cfgPath, cfgExplicit)
 		if err != nil {
 			slog.Error("config load failed", "error", err)
 			os.Exit(1)
@@ -85,7 +87,7 @@ func main() {
 	}
 
 	// ---- load config ----
-	cfg, err := loadConfig(*cfgPath)
+	cfg, err := loadConfig(*cfgPath, cfgExplicit)
 	if err != nil {
 		slog.Error("config load failed", "error", err)
 		os.Exit(1)
@@ -340,10 +342,10 @@ func main() {
 	slog.Info("shutdown complete")
 }
 
-func loadConfig(path string) (*config.Config, error) {
+func loadConfig(path string, explicit bool) (*config.Config, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) && !explicit {
 			slog.Info("config file not found, using defaults (dev mode)", "path", path)
 			return config.DefaultConfig(), nil
 		}
