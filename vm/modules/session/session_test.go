@@ -920,8 +920,8 @@ func TestSessionOpen_ConsentForAnotherCreatorRejected(t *testing.T) {
 		SessionID: "s1", GameID: "game1", Players: players, Stakes: 100,
 		Signatures: map[string]string{pub1.Hex(): crypto.Sign(priv1, msg), pub2.Hex(): crypto.Sign(priv2, msg)},
 	})
-	if err := handleSessionOpen(ctx, payload); err == nil {
-		t.Fatal("consent names the session creator; another operator must not be able to use it")
+	if err := handleSessionOpen(ctx, payload); err == nil || !strings.Contains(err.Error(), "invalid consent signature") {
+		t.Fatalf("consent names the session creator; another operator must not be able to use it, got %v", err)
 	}
 }
 
@@ -944,8 +944,8 @@ func TestSessionOpen_DelegatedOpenNeedsGranterConsent(t *testing.T) {
 		SessionID: "s1", GameID: "game1", Players: []string{pub1Hex, pub2Hex}, Stakes: 100,
 		Signatures: map[string]string{pub2Hex: crypto.Sign(priv2, msg)},
 	})
-	if err := handleSessionOpen(delegatedCtx(t, state, pub1Hex), payload); err == nil {
-		t.Fatal("the granter did not sign this tx, so staking the granter needs the granter's own consent")
+	if err := handleSessionOpen(delegatedCtx(t, state, pub1Hex), payload); err == nil || !strings.Contains(err.Error(), "missing consent signature") {
+		t.Fatalf("the granter did not sign this tx, so staking the granter needs the granter's own consent, got %v", err)
 	}
 }
 
