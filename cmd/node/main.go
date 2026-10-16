@@ -184,6 +184,12 @@ func main() {
 
 	// ---- consensus ----
 	poa := consensus.New(cfg, bc, state, mempool, exec, emitter, privKey)
+	if recovered, err := poa.RecoverTipState(); err != nil {
+		slog.Error("state does not match the stored tip", "error", err)
+		os.Exit(1)
+	} else if recovered {
+		slog.Warn("replayed the tip block: its state commit was missing", "height", bc.Height())
+	}
 
 	// ---- TLS ----
 	tlsCfg, err := config.LoadTLSConfig(cfg.TLS)
