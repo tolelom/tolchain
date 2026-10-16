@@ -24,7 +24,7 @@ func newCtx(t *testing.T, state core.State, fromPubHex string) *vm.Context {
 	}}
 	tx := &core.Transaction{ID: "tx1", From: fromPubHex, Type: core.TxRandomCommit}
 	return &vm.Context{State: state, Block: block, Tx: tx, Emitter: emitter, EffectiveSender: fromPubHex,
-		BlockHash: blockHashes(map[int64]string{2: "target-hash"})}
+		BlockHash: blockHashes(map[int64]string{2: "target-hash"}), Operators: map[string]bool{fromPubHex: true}}
 }
 
 // blockHashes는 높이별 블록 해시 표로 Context.BlockHash를 만든다.

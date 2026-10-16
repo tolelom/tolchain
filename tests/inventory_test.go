@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/tolelom/tolchain/core"
@@ -19,6 +20,7 @@ func TestEquipUnequip(t *testing.T) {
 	exec := vm.NewExecutor(state, emitter)
 
 	w, _ := wallet.Generate()
+	exec.SetOperators([]string{w.PubKey()})
 	_ = state.SetAccount(&core.Account{Address: w.PubKey(), Balance: 1000})
 
 	block := core.NewBlock("test-chain", 1, "0000", w.PubKey(), nil)
@@ -77,6 +79,7 @@ func TestEquipSlotConflict(t *testing.T) {
 	exec := vm.NewExecutor(state, emitter)
 
 	w, _ := wallet.Generate()
+	exec.SetOperators([]string{w.PubKey()})
 	_ = state.SetAccount(&core.Account{Address: w.PubKey(), Balance: 1000})
 
 	block := core.NewBlock("test-chain", 1, "0000", w.PubKey(), nil)
@@ -114,6 +117,7 @@ func TestEquippedAssetCannotTransfer(t *testing.T) {
 
 	w, _ := wallet.Generate()
 	other, _ := wallet.Generate()
+	exec.SetOperators([]string{w.PubKey()})
 	_ = state.SetAccount(&core.Account{Address: w.PubKey(), Balance: 1000})
 
 	block := core.NewBlock("test-chain", 1, "0000", w.PubKey(), nil)
@@ -121,25 +125,31 @@ func TestEquippedAssetCannotTransfer(t *testing.T) {
 	regTx, _ := w.NewTx("test-chain", core.TxRegisterTemplate, 0, 0, core.RegisterTemplatePayload{
 		ID: "sword-tmpl", Name: "Sword", Tradeable: true,
 	})
-	_ = exec.ExecuteTx(block, regTx)
+	if err := exec.ExecuteTx(block, regTx); err != nil {
+		t.Fatal(err)
+	}
 
 	mintTx, _ := w.MintAsset("test-chain", "sword-tmpl", w.PubKey(), nil, 1, 0)
-	_ = exec.ExecuteTx(block, mintTx)
+	if err := exec.ExecuteTx(block, mintTx); err != nil {
+		t.Fatal(err)
+	}
 	assetID := crypto.Hash([]byte(mintTx.ID + ":asset:sword-tmpl"))
 
 	// Equip
 	equipTx, _ := w.EquipItem("test-chain", assetID, "weapon", 2, 0)
-	_ = exec.ExecuteTx(block, equipTx)
+	if err := exec.ExecuteTx(block, equipTx); err != nil {
+		t.Fatal(err)
+	}
 
 	// Try transfer — should fail
 	transferTx, _ := w.TransferAsset("test-chain", assetID, other.PubKey(), 3, 0)
-	if err := exec.ExecuteTx(block, transferTx); err == nil {
-		t.Error("should fail: asset is equipped")
+	if err := exec.ExecuteTx(block, transferTx); err == nil || !strings.Contains(err.Error(), "equipped") {
+		t.Errorf("transfer should fail because the asset is equipped, got %v", err)
 	}
 
 	// Try list on market — should fail
 	listTx, _ := w.ListMarket("test-chain", assetID, 100, 3, 0)
-	if err := exec.ExecuteTx(block, listTx); err == nil {
-		t.Error("should fail: asset is equipped")
+	if err := exec.ExecuteTx(block, listTx); err == nil || !strings.Contains(err.Error(), "equipped") {
+		t.Errorf("listing should fail because the asset is equipped, got %v", err)
 	}
 }

@@ -17,7 +17,7 @@ type Context struct {
 	Block           *core.Block
 	Tx              *core.Transaction
 	Emitter         events.EventEmitter
-	Operators       map[string]bool // operator pubkeys; nil or empty → no restrictions
+	Operators       map[string]bool // operator pubkeys; nil or empty → nobody is an operator
 	MaxTotalSupply  uint64          // 0 → unlimited; >0 → hard cap on total minted tokens
 	EffectiveSender string          // tx.From if direct, tx.OnBehalfOf if delegated
 	// BlockHash returns the hash of an already committed block. nil if not configured.

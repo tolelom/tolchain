@@ -60,6 +60,7 @@ if [ ! -f config.json ]; then
   "p2p_port": 30303,
   "max_block_txs": 500,
   "validators": ["<검증자_공개키_64자리_hex>"],
+  "operators": ["<게임서버_공개키_64자리_hex>"],
   "genesis": {
     "chain_id": "tolchain-dev",
     "alloc": { "<검증자_공개키_64자리_hex>": 1000000 }
@@ -77,6 +78,7 @@ EXAMPLE
   "p2p_port": 30303,
   "max_block_txs": 500,
   "validators": ["${PUBKEY}"],
+  "operators": ["${PUBKEY}"],
   "genesis": {
     "chain_id": "tolchain-dev",
     "alloc": {

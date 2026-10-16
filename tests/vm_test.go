@@ -64,6 +64,7 @@ func TestMintAsset(t *testing.T) {
 	exec := vm.NewExecutor(state, emitter)
 
 	creator, _ := wallet.Generate()
+	exec.SetOperators([]string{creator.PubKey()})
 	_ = state.SetAccount(&core.Account{Address: creator.PubKey(), Balance: 1000})
 
 	block := core.NewBlock("test-chain", 1, "0000", creator.PubKey(), nil)

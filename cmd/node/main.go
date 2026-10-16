@@ -360,11 +360,16 @@ func loadConfig(path string, explicit bool) (*config.Config, error) {
 	return cfg, nil
 }
 
-// ensureDevValidator adds the loaded key as the sole validator when using the
-// default config (no config file). This prevents validation errors in dev mode.
+// ensureDevValidator adds the loaded key as the sole validator and operator
+// when using the default config (no config file), so a dev chain can produce
+// blocks and run operator-only transactions.
 func ensureDevValidator(cfg *config.Config, pubKeyHex string) {
 	if len(cfg.Validators) == 0 {
 		cfg.Validators = []string{pubKeyHex}
 		slog.Info("dev mode: auto-registered validator", "pubkey", pubKeyHex)
+	}
+	if len(cfg.Operators) == 0 {
+		cfg.Operators = []string{pubKeyHex}
+		slog.Info("dev mode: auto-registered operator", "pubkey", pubKeyHex)
 	}
 }
