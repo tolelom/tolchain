@@ -191,6 +191,21 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction, emitter even
 		effectiveSender = tx.OnBehalfOf
 	}
 
+	ctx := &Context{
+		State:           e.state,
+		Block:           block,
+		Tx:              tx,
+		Emitter:         emitter,
+		Operators:       e.operators,
+		MaxTotalSupply:  e.maxTotalSupply,
+		EffectiveSender: effectiveSender,
+		BlockHash:       e.blockHash,
+	}
+	// The fee leaves the granter's balance too, so it counts toward max_amount.
+	if err := ChargeDelegationAmount(ctx, tx.Fee); err != nil {
+		return fmt.Errorf("delegation: %w", err)
+	}
+
 	acc, err := e.state.GetAccount(effectiveSender)
 	if err != nil {
 		return fmt.Errorf("get account: %w", err)
@@ -241,16 +256,6 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction, emitter even
 		}
 	}
 
-	ctx := &Context{
-		State:           e.state,
-		Block:           block,
-		Tx:              tx,
-		Emitter:         emitter,
-		Operators:       e.operators,
-		MaxTotalSupply:  e.maxTotalSupply,
-		EffectiveSender: effectiveSender,
-		BlockHash:       e.blockHash,
-	}
 	return runHandler(tx, ctx)
 }
 
