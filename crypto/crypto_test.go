@@ -249,3 +249,17 @@ func TestHash_MatchesHashBytes(t *testing.T) {
 		t.Error("Hash and HashBytes are inconsistent")
 	}
 }
+
+func TestPubKeyFromHex_RejectsNonCanonicalHex(t *testing.T) {
+	_, pub, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	upper := strings.ToUpper(pub.Hex())
+	if _, err := PubKeyFromHex(upper); err == nil {
+		t.Fatal("uppercase hex names the same key under a different account string; it must be rejected")
+	}
+	if _, err := PubKeyFromHex(pub.Hex()); err != nil {
+		t.Fatalf("lowercase hex must still parse: %v", err)
+	}
+}

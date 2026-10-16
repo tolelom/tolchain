@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tolelom/tolchain/core"
+	"github.com/tolelom/tolchain/crypto"
 )
 
 const (
@@ -280,9 +280,8 @@ func (c *Config) Validate() error {
 	}
 	seen := make(map[string]bool, len(c.Validators))
 	for i, v := range c.Validators {
-		b, err := hex.DecodeString(v)
-		if err != nil || len(b) != 32 {
-			return fmt.Errorf("validators[%d]: must be 64-char hex (32 bytes ed25519 pubkey), got %q", i, v)
+		if _, err := crypto.PubKeyFromHex(v); err != nil {
+			return fmt.Errorf("validators[%d]: must be 64-char lowercase hex (32 bytes ed25519 pubkey), got %q", i, v)
 		}
 		if seen[v] {
 			return fmt.Errorf("validators[%d]: duplicate pubkey %q", i, v)
@@ -293,8 +292,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("operators list must not be empty")
 	}
 	for i, o := range c.Operators {
-		if b, err := hex.DecodeString(o); err != nil || len(b) != 32 {
-			return fmt.Errorf("operators[%d]: must be 64-char hex (32 bytes ed25519 pubkey), got %q", i, o)
+		if _, err := crypto.PubKeyFromHex(o); err != nil {
+			return fmt.Errorf("operators[%d]: must be 64-char lowercase hex (32 bytes ed25519 pubkey), got %q", i, o)
 		}
 	}
 	for i, e := range c.RPC.TrustedProxies {
