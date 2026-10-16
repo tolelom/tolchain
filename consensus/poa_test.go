@@ -23,6 +23,12 @@ func setupPoA(t *testing.T) (*PoA, *core.Blockchain, *wallet.Wallet) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	poa, bc := setupPoAFor(t, w)
+	return poa, bc, w
+}
+
+func setupPoAFor(t *testing.T, w *wallet.Wallet) (*PoA, *core.Blockchain) {
+	t.Helper()
 
 	db := testutil.NewMemDB()
 	state := storage.NewStateDB(db)
@@ -55,7 +61,7 @@ func setupPoA(t *testing.T) (*PoA, *core.Blockchain, *wallet.Wallet) {
 	exec := vm.NewExecutor(state, emitter)
 	poa := New(cfg, bc, state, mempool, exec, emitter, w.PrivKey())
 
-	return poa, bc, w
+	return poa, bc
 }
 
 // --- IsProposer tests ---
