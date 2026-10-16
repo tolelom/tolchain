@@ -71,3 +71,11 @@ func TestValidate_RejectsUppercaseKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_RejectsAllocToNonCanonicalKey(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Genesis.Alloc = map[string]uint64{strings.ToUpper(validatorHex(t)): 1}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "genesis.alloc") {
+		t.Fatalf("an alloc key nobody can sign for locks its balance forever; want genesis.alloc error, got %v", err)
+	}
+}
