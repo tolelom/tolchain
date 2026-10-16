@@ -5,47 +5,63 @@ import (
 	"testing"
 )
 
-// 정식 포맷이 정확히 고정되어 있는지 검증한다. a301_server 등 외부 컨슈머가
+func baseConsent() SessionConsent {
+	return SessionConsent{ChainID: "c", SessionID: "s", GameID: "g", Stakes: 1, Creator: "op", Players: []string{"p1", "p2"}}
+}
+
+// 정식 포맷이 정확히 고정되어 있는지 검증한다. 동의 서명을 만드는 쪽이
 // 같은 바이트열을 생성해야 하므로 리터럴로 핀(pin)한다.
-func TestSessionConsentMessage_CanonicalFormat(t *testing.T) {
-	got := SessionConsentMessage("tolchain-dev", "sess-1", "game-1", 100)
-	want := "session-consent:v2:12:tolchain-dev:6:sess-1:6:game-1:100"
+func TestSessionConsent_CanonicalFormat(t *testing.T) {
+	got := SessionConsent{
+		ChainID: "tolchain-dev", SessionID: "sess-1", GameID: "game-1", Stakes: 100,
+		Creator: "op", Players: []string{"bb", "aa"},
+	}.Message()
+	want := "session-consent:v3:12:tolchain-dev:6:sess-1:6:game-1:100:2:op:2:2:aa:2:bb"
 	if string(got) != want {
-		t.Fatalf("SessionConsentMessage = %q, want %q", got, want)
+		t.Fatalf("Message = %q, want %q", got, want)
 	}
 }
 
-func TestSessionConsentMessage_EmptyFields(t *testing.T) {
-	got := SessionConsentMessage("", "", "", 0)
-	want := "session-consent:v2:0::0::0::0"
-	if string(got) != want {
-		t.Fatalf("SessionConsentMessage = %q, want %q", got, want)
+// 플레이어가 동의하는 대상에 영향을 주는 필드 중 하나라도 바뀌면 메시지가 달라져야 한다.
+func TestSessionConsent_FieldChangesChangeMessage(t *testing.T) {
+	base := baseConsent().Message()
+	variants := map[string]func(*SessionConsent){
+		"chain_id":   func(c *SessionConsent) { c.ChainID = "c2" },
+		"session_id": func(c *SessionConsent) { c.SessionID = "s2" },
+		"game_id":    func(c *SessionConsent) { c.GameID = "g2" },
+		"stakes":     func(c *SessionConsent) { c.Stakes = 2 },
+		"creator":    func(c *SessionConsent) { c.Creator = "op2" },
+		"players":    func(c *SessionConsent) { c.Players = []string{"p1", "p3"} },
 	}
-}
-
-// 결정에 영향을 주는 4개 필드 중 하나라도 바뀌면 메시지가 달라져야 한다.
-func TestSessionConsentMessage_FieldChangesChangeMessage(t *testing.T) {
-	base := SessionConsentMessage("c", "s", "g", 1)
-	variants := map[string][]byte{
-		"chain_id":   SessionConsentMessage("c2", "s", "g", 1),
-		"session_id": SessionConsentMessage("c", "s2", "g", 1),
-		"game_id":    SessionConsentMessage("c", "s", "g2", 1),
-		"stakes":     SessionConsentMessage("c", "s", "g", 2),
-	}
-	for name, v := range variants {
-		if bytes.Equal(base, v) {
+	for name, mutate := range variants {
+		c := baseConsent()
+		mutate(&c)
+		if bytes.Equal(base, c.Message()) {
 			t.Errorf("changing %s must change the consent message", name)
 		}
 	}
 }
 
+func TestSessionConsent_PlayerOrderDoesNotMatter(t *testing.T) {
+	a := baseConsent()
+	b := baseConsent()
+	b.Players = []string{"p2", "p1"}
+	if !bytes.Equal(a.Message(), b.Message()) {
+		t.Fatal("players sign the set of opponents, not the payload order")
+	}
+	if b.Players[0] != "p2" {
+		t.Fatal("Message must not reorder the caller's slice")
+	}
+}
+
 // 길이 프리픽스 인코딩 덕분에 ':'가 포함된 ID가 필드 경계를 이동시켜
 // 서로 다른 필드 조합이 같은 바이트열로 인코딩되는 일이 없어야 한다.
-// (naive한 콜론 join이라면 아래 두 조합은 동일한 문자열이 된다.)
-func TestSessionConsentMessage_NoBoundaryAmbiguity(t *testing.T) {
-	a := SessionConsentMessage("chain", "s1:100", "g", 5)
-	b := SessionConsentMessage("chain", "s1", "100:g", 5)
-	if bytes.Equal(a, b) {
-		t.Fatalf("field-boundary collision: %q", a)
+func TestSessionConsent_NoBoundaryAmbiguity(t *testing.T) {
+	a := baseConsent()
+	a.SessionID, a.GameID = "s1:100", "g"
+	b := baseConsent()
+	b.SessionID, b.GameID = "s1", "100:g"
+	if bytes.Equal(a.Message(), b.Message()) {
+		t.Fatalf("field-boundary collision: %q", a.Message())
 	}
 }
