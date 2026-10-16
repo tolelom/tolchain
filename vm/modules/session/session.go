@@ -50,15 +50,24 @@ func handleSessionOpen(ctx *vm.Context, payload json.RawMessage) error {
 	}
 
 	// Verify that every player (except tx sender) has signed the canonical
-	// consent message (core.SessionConsentMessage) — regardless of stakes.
-	// The message commits to chain_id, session_id, game_id and stakes, so a
-	// consent cannot be replayed on another chain, for another session/game,
-	// or with a different stakes amount. The chain ID is taken from the
-	// executing block's header (the executor enforces tx.ChainID == block ChainID).
-	consentMsg := core.SessionConsentMessage(ctx.Block.Header.ChainID, p.SessionID, p.GameID, p.Stakes)
+	// consent message (core.SessionConsent) — regardless of stakes.
+	// The message commits to chain, session, game, stakes, creator and the
+	// player set, so a consent cannot be replayed elsewhere or used by another
+	// operator. The chain ID is taken from the executing block's header (the
+	// executor enforces tx.ChainID == block ChainID).
+	consentMsg := core.SessionConsent{
+		ChainID:   ctx.Block.Header.ChainID,
+		SessionID: p.SessionID,
+		GameID:    p.GameID,
+		Stakes:    p.Stakes,
+		Creator:   ctx.EffectiveSender,
+		Players:   p.Players,
+	}.Message()
 	for _, player := range p.Players {
-		if player == ctx.EffectiveSender {
-			continue // the sender implicitly consents by submitting the tx
+		// Only the key that signed the tx implicitly consents. A delegated
+		// open is signed by the delegate, so the granter must still consent.
+		if player == ctx.Tx.From {
+			continue
 		}
 		sig, ok := p.Signatures[player]
 		if !ok || sig == "" {

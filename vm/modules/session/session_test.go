@@ -46,8 +46,8 @@ func TestSessionOpen_Success(t *testing.T) {
 	_ = state.SetAccount(&core.Account{Address: pub1Hex, Balance: 1000})
 	_ = state.SetAccount(&core.Account{Address: pub2Hex, Balance: 1000})
 
-	// Player 2 signs consent over the canonical v2 message.
-	consentMsg := core.SessionConsentMessage(testChainID, "s1", "game1", 100)
+	// Player 2 signs consent over the canonical v3 message.
+	consentMsg := core.SessionConsent{ChainID: testChainID, SessionID: "s1", GameID: "game1", Stakes: 100, Creator: pub1Hex, Players: []string{pub1Hex, pub2Hex}}.Message()
 	sig := crypto.Sign(priv2, consentMsg)
 
 	ctx := newCtx(t, state, pub1Hex)
@@ -204,7 +204,7 @@ func TestSessionOpen_OldFormatConsentRejected(t *testing.T) {
 func TestSessionOpen_StakesTamperConsentRejected(t *testing.T) {
 	state, priv2, pub1Hex, pub2Hex := consentTestSetup(t)
 
-	sig := crypto.Sign(priv2, core.SessionConsentMessage(testChainID, "s1", "game1", 100))
+	sig := crypto.Sign(priv2, core.SessionConsent{ChainID: testChainID, SessionID: "s1", GameID: "game1", Stakes: 100, Creator: pub1Hex, Players: []string{pub1Hex, pub2Hex}}.Message())
 
 	ctx := newCtx(t, state, pub1Hex)
 	payload, _ := json.Marshal(core.SessionOpenPayload{
@@ -224,7 +224,7 @@ func TestSessionOpen_StakesTamperConsentRejected(t *testing.T) {
 func TestSessionOpen_WrongChainConsentRejected(t *testing.T) {
 	state, priv2, pub1Hex, pub2Hex := consentTestSetup(t)
 
-	sig := crypto.Sign(priv2, core.SessionConsentMessage("other-chain", "s1", "game1", 100))
+	sig := crypto.Sign(priv2, core.SessionConsent{ChainID: "other-chain", SessionID: "s1", GameID: "game1", Stakes: 100, Creator: pub1Hex, Players: []string{pub1Hex, pub2Hex}}.Message())
 
 	ctx := newCtx(t, state, pub1Hex)
 	payload, _ := json.Marshal(core.SessionOpenPayload{
@@ -244,7 +244,7 @@ func TestSessionOpen_WrongChainConsentRejected(t *testing.T) {
 func TestSessionOpen_GameIDTamperConsentRejected(t *testing.T) {
 	state, priv2, pub1Hex, pub2Hex := consentTestSetup(t)
 
-	sig := crypto.Sign(priv2, core.SessionConsentMessage(testChainID, "s1", "game1", 100))
+	sig := crypto.Sign(priv2, core.SessionConsent{ChainID: testChainID, SessionID: "s1", GameID: "game1", Stakes: 100, Creator: pub1Hex, Players: []string{pub1Hex, pub2Hex}}.Message())
 
 	ctx := newCtx(t, state, pub1Hex)
 	payload, _ := json.Marshal(core.SessionOpenPayload{
@@ -899,5 +899,72 @@ func TestSessionCancel_NilEmitter(t *testing.T) {
 
 	if err := handleSessionCancel(ctx, payload); err != nil {
 		t.Fatalf("expected success with nil emitter: %v", err)
+	}
+}
+
+// 한 operator를 위해 받은 동의를 다른 operator가 가로채 먼저 세션을 열 수 없어야 한다.
+func TestSessionOpen_ConsentForAnotherCreatorRejected(t *testing.T) {
+	state := testutil.NewStateDB()
+	priv1, pub1, _ := crypto.GenerateKeyPair()
+	priv2, pub2, _ := crypto.GenerateKeyPair()
+	_, otherOp, _ := crypto.GenerateKeyPair()
+	players := []string{pub1.Hex(), pub2.Hex()}
+	for _, p := range players {
+		_ = state.SetAccount(&core.Account{Address: p, Balance: 1000})
+	}
+	msg := core.SessionConsent{ChainID: testChainID, SessionID: "s1", GameID: "game1", Stakes: 100,
+		Creator: "intended-operator", Players: players}.Message()
+
+	ctx := newCtx(t, state, otherOp.Hex())
+	payload, _ := json.Marshal(core.SessionOpenPayload{
+		SessionID: "s1", GameID: "game1", Players: players, Stakes: 100,
+		Signatures: map[string]string{pub1.Hex(): crypto.Sign(priv1, msg), pub2.Hex(): crypto.Sign(priv2, msg)},
+	})
+	if err := handleSessionOpen(ctx, payload); err == nil {
+		t.Fatal("consent names the session creator; another operator must not be able to use it")
+	}
+}
+
+// delegatedCtx는 delegate가 granter(pub1Hex) 대신 session_open을 보내는 Context다.
+func delegatedCtx(t *testing.T, state core.State, granterHex string) *vm.Context {
+	t.Helper()
+	_, delegate, _ := crypto.GenerateKeyPair()
+	ctx := newCtx(t, state, granterHex)
+	ctx.Tx.From = delegate.Hex()
+	ctx.Tx.OnBehalfOf = granterHex
+	return ctx
+}
+
+func TestSessionOpen_DelegatedOpenNeedsGranterConsent(t *testing.T) {
+	state, priv2, pub1Hex, pub2Hex := consentTestSetup(t)
+	msg := core.SessionConsent{ChainID: testChainID, SessionID: "s1", GameID: "game1", Stakes: 100,
+		Creator: pub1Hex, Players: []string{pub1Hex, pub2Hex}}.Message()
+
+	payload, _ := json.Marshal(core.SessionOpenPayload{
+		SessionID: "s1", GameID: "game1", Players: []string{pub1Hex, pub2Hex}, Stakes: 100,
+		Signatures: map[string]string{pub2Hex: crypto.Sign(priv2, msg)},
+	})
+	if err := handleSessionOpen(delegatedCtx(t, state, pub1Hex), payload); err == nil {
+		t.Fatal("the granter did not sign this tx, so staking the granter needs the granter's own consent")
+	}
+}
+
+func TestSessionOpen_DelegatedOpenWithGranterConsent(t *testing.T) {
+	state := testutil.NewStateDB()
+	priv1, pub1, _ := crypto.GenerateKeyPair()
+	priv2, pub2, _ := crypto.GenerateKeyPair()
+	players := []string{pub1.Hex(), pub2.Hex()}
+	for _, p := range players {
+		_ = state.SetAccount(&core.Account{Address: p, Balance: 1000})
+	}
+	msg := core.SessionConsent{ChainID: testChainID, SessionID: "s1", GameID: "game1", Stakes: 100,
+		Creator: pub1.Hex(), Players: players}.Message()
+
+	payload, _ := json.Marshal(core.SessionOpenPayload{
+		SessionID: "s1", GameID: "game1", Players: players, Stakes: 100,
+		Signatures: map[string]string{pub1.Hex(): crypto.Sign(priv1, msg), pub2.Hex(): crypto.Sign(priv2, msg)},
+	})
+	if err := handleSessionOpen(delegatedCtx(t, state, pub1.Hex()), payload); err != nil {
+		t.Fatalf("delegated open with every player's consent must succeed: %v", err)
 	}
 }

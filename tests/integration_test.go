@@ -374,9 +374,12 @@ func TestGameIntegration(t *testing.T) {
 	// 6. Session: 게임 세션 (스테이킹 대전)
 	// ============================================
 	t.Run("6_Session", func(t *testing.T) {
-		// Players sign the canonical v2 consent message (commits to chain,
-		// session, game and stakes).
-		consentMsg := core.SessionConsentMessage(testChainID, "match-001", "pvp-arena", 10_000)
+		// Players sign the canonical v3 consent message (commits to chain,
+		// session, game, stakes, creator and player set).
+		consentMsg := core.SessionConsent{
+			ChainID: testChainID, SessionID: "match-001", GameID: "pvp-arena", Stakes: 10_000,
+			Creator: gameServer.PubKey(), Players: []string{player1.PubKey(), player2.PubKey()},
+		}.Message()
 		p1Sig := crypto.Sign(player1.PrivKey(), consentMsg)
 		p2Sig := crypto.Sign(player2.PrivKey(), consentMsg)
 
