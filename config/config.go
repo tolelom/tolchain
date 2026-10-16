@@ -266,6 +266,9 @@ func (c *Config) Validate() error {
 	if c.PruneKeepBlocks < 0 || (c.PruneKeepBlocks > 0 && c.PruneKeepBlocks < MinPruneKeepBlocks) {
 		return fmt.Errorf("prune_keep_blocks must be 0 (no pruning) or at least %d, got %d", MinPruneKeepBlocks, c.PruneKeepBlocks)
 	}
+	if err := c.validateNonNegative(); err != nil {
+		return err
+	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error", "":
 		// valid
@@ -286,6 +289,11 @@ func (c *Config) Validate() error {
 		}
 		seen[v] = true
 	}
+	for i, o := range c.Operators {
+		if b, err := hex.DecodeString(o); err != nil || len(b) != 32 {
+			return fmt.Errorf("operators[%d]: must be 64-char hex (32 bytes ed25519 pubkey), got %q", i, o)
+		}
+	}
 	for i, e := range c.RPC.TrustedProxies {
 		if strings.Contains(e, "/") {
 			if _, _, err := net.ParseCIDR(e); err != nil {
@@ -301,6 +309,39 @@ func (c *Config) Validate() error {
 		allEmpty := t.CACert == "" && t.NodeCert == "" && t.NodeKey == ""
 		if !allSet && !allEmpty {
 			return fmt.Errorf("tls: all three paths (ca_cert, node_cert, node_key) must be set or all empty")
+		}
+	}
+	return nil
+}
+
+func (c *Config) validateNonNegative() error {
+	fields := []struct {
+		name  string
+		value float64
+	}{
+		{"max_block_txs", float64(c.MaxBlockTxs)},
+		{"mempool.max_size", float64(c.Mempool.MaxSize)},
+		{"mempool.max_tx_age_sec", float64(c.Mempool.MaxTxAgeSec)},
+		{"mempool.max_future_sec", float64(c.Mempool.MaxFutureSec)},
+		{"network.max_peers", float64(c.Network.MaxPeers)},
+		{"network.write_timeout_sec", float64(c.Network.WriteTimeoutSec)},
+		{"network.read_timeout_sec", float64(c.Network.ReadTimeoutSec)},
+		{"network.max_message_size", float64(c.Network.MaxMessageSize)},
+		{"network.sync_batch_size", float64(c.Network.SyncBatchSize)},
+		{"network.max_sync_batch_size", float64(c.Network.MaxSyncBatchSize)},
+		{"rpc.rate_limit", c.RPC.RateLimit},
+		{"rpc.rate_burst", float64(c.RPC.RateBurst)},
+		{"rpc.read_timeout_sec", float64(c.RPC.ReadTimeoutSec)},
+		{"rpc.write_timeout_sec", float64(c.RPC.WriteTimeoutSec)},
+		{"rpc.idle_timeout_sec", float64(c.RPC.IdleTimeoutSec)},
+		{"rpc.max_body_size", float64(c.RPC.MaxBodySize)},
+		{"rpc.sse_buffer_size", float64(c.RPC.SSEBufferSize)},
+		{"consensus.block_interval_sec", float64(c.Consensus.BlockIntervalSec)},
+		{"consensus.max_time_drift_sec", float64(c.Consensus.MaxTimeDriftSec)},
+	}
+	for _, f := range fields {
+		if f.value < 0 {
+			return fmt.Errorf("%s must not be negative, got %v", f.name, f.value)
 		}
 	}
 	return nil
