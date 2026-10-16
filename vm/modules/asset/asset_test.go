@@ -2,6 +2,7 @@ package asset
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 	"time"
 
@@ -670,5 +671,21 @@ func TestValidateSchema_MissingOptionalProperty(t *testing.T) {
 
 	if err := ValidateSchema(schema, props); err != nil {
 		t.Fatalf("expected success for missing optional property, got %v", err)
+	}
+}
+
+func TestValidateSchema_IntRangeIndependentOfArchitecture(t *testing.T) {
+	schema := map[string]any{"n": "int"}
+	accept := []float64{-(1 << 63), (1 << 63) - 1024, 0}
+	reject := []float64{1 << 63, 1 << 64, -(1 << 63) - 2048, math.Inf(1), math.NaN()}
+	for _, v := range accept {
+		if err := ValidateSchema(schema, map[string]any{"n": v}); err != nil {
+			t.Errorf("%v fits int64 and must be accepted: %v", v, err)
+		}
+	}
+	for _, v := range reject {
+		if err := ValidateSchema(schema, map[string]any{"n": v}); err == nil {
+			t.Errorf("%v is outside int64 and must be rejected on every architecture", v)
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/crypto"
@@ -177,7 +178,10 @@ func ValidateSchema(schema map[string]any, properties map[string]any) error {
 			// JSON numbers decode as float64.
 			switch v := val.(type) {
 			case float64:
-				if v != float64(int64(v)) {
+				// Compare against the int64 bounds as floats: converting an
+				// out-of-range float to int64 is implementation-defined in Go
+				// and differs between amd64 and arm64.
+				if !(v >= -(1<<63) && v < 1<<63) || v != math.Trunc(v) {
 					return fmt.Errorf("property %q must be an integer", key)
 				}
 			case json.Number:
