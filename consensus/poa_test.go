@@ -1,6 +1,7 @@
 package consensus
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -331,7 +332,7 @@ func TestValidateBlock_RequiresStateRoot(t *testing.T) {
 	block.Header.StateRoot = ""
 	block.Sign(w.PrivKey())
 
-	if err := poa.ValidateBlock(block); err == nil {
-		t.Fatal("a block without state_root skips the state check on every syncing node; it must be rejected")
+	if err := poa.ValidateBlock(block); err == nil || !strings.Contains(err.Error(), "state_root") {
+		t.Fatalf("a block without state_root skips the state check on every syncing node; it must be rejected, got %v", err)
 	}
 }
