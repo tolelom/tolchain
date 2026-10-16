@@ -69,6 +69,9 @@ func NewServer(addr string, handler *Handler, authToken string, sseBroker *SSEBr
 		WriteTimeout:      time.Duration(writeTimeoutSec) * time.Second,
 		IdleTimeout:       time.Duration(idleTimeoutSec) * time.Second,
 	}
+	if sseBroker != nil {
+		s.srv.RegisterOnShutdown(sseBroker.Close)
+	}
 	return s
 }
 

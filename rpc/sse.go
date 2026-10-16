@@ -28,6 +28,8 @@ type SSEBroker struct {
 	authToken    string
 	eventBufSize int
 	clientCount  atomic.Int32
+	done         chan struct{}
+	closeOnce    sync.Once
 }
 
 // NewSSEBroker creates a broker that subscribes to all event types on the emitter.
@@ -37,6 +39,7 @@ func NewSSEBroker(emitter *events.Emitter, authToken string, sseBufferSize int) 
 		clients:      make(map[chan events.Event]map[events.EventType]bool),
 		authToken:    authToken,
 		eventBufSize: sseBufferSize,
+		done:         make(chan struct{}),
 	}
 	for _, t := range events.EventTypeValues() {
 		typ := t
@@ -45,6 +48,10 @@ func NewSSEBroker(emitter *events.Emitter, authToken string, sseBufferSize int) 
 		})
 	}
 	return b
+}
+
+func (b *SSEBroker) Close() {
+	b.closeOnce.Do(func() { close(b.done) })
 }
 
 func (b *SSEBroker) broadcast(ev events.Event) {
@@ -103,6 +110,8 @@ func (b *SSEBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
 
 	ch := make(chan events.Event, b.eventBufSize)
 	var filter map[events.EventType]bool
@@ -128,6 +137,8 @@ func (b *SSEBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-b.done:
 			return
 		case ev := <-ch:
 			data, err := json.Marshal(ev)

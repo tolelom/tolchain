@@ -25,6 +25,7 @@ type ipLimiter struct {
 	rate    float64 // tokens per second
 	burst   int     // max tokens
 	stopCh  chan struct{}
+	stopped sync.Once
 }
 
 // bucket is a simple token bucket for one IP.
@@ -74,7 +75,7 @@ func (l *ipLimiter) allow(ip string) bool {
 
 // stop terminates the background cleanup goroutine.
 func (l *ipLimiter) stop() {
-	close(l.stopCh)
+	l.stopped.Do(func() { close(l.stopCh) })
 }
 
 // cleanupLoop periodically removes stale entries.
