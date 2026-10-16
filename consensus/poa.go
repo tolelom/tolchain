@@ -117,6 +117,11 @@ func (p *PoA) ValidateBlock(block *core.Block) error {
 	if txRoot := core.ComputeTxRoot(block.Transactions); block.Header.TxRoot != txRoot {
 		return fmt.Errorf("tx_root mismatch: got %s want %s", block.Header.TxRoot, txRoot)
 	}
+	// Every non-genesis block must commit to its post-state, otherwise a
+	// syncing node has nothing to compare its re-execution against.
+	if block.Header.StateRoot == "" {
+		return errors.New("missing state_root")
+	}
 
 	// Block timestamp must be positive (non-zero, non-negative).
 	if block.Header.Timestamp <= 0 {
