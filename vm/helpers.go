@@ -37,9 +37,9 @@ func ValidatePubKey(hexStr, fieldName string) error {
 }
 
 // ChargeDelegationAmount enforces the MaxAmount limit on a delegation grant
-// for tx that move tokens (transfer, grant_reward). Caller passes the amount
-// the tx wants to spend on behalf of the granter; this updates SpentAmount
-// in state and rejects if MaxAmount would be exceeded.
+// for tx fees and for tx that move tokens (transfer, grant_reward, buy_market).
+// Caller passes the amount the tx wants to spend on behalf of the granter;
+// this updates SpentAmount in state and rejects if MaxAmount would be exceeded.
 //
 // No-op when tx is direct (OnBehalfOf == ""), grant has MaxAmount == 0
 // (unlimited), or amount == 0.

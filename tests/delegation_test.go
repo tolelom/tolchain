@@ -368,3 +368,22 @@ func TestDelegation_E2E_PreventReDelegation(t *testing.T) {
 		t.Error("re-delegation via delegated TX should fail")
 	}
 }
+
+func TestDelegation_FeeCountsTowardMaxAmount(t *testing.T) {
+	state, exec, granter, grantee := setupDelegationTest(t)
+	receiver, _ := wallet.Generate()
+	proposer, _ := wallet.Generate()
+
+	grantTx, _ := granter.GrantDelegation(delegationChainID, grantee.PubKey(), []string{"transfer"}, 0, 0, 100, 0, 0)
+	if err := execTx(t, exec, grantTx, 1, proposer.PubKey()); err != nil {
+		t.Fatal(err)
+	}
+
+	// 95 transferred + 10 fee leaves the granter's account: 105 > max_amount 100.
+	tx, _ := grantee.NewDelegatedTx(delegationChainID, core.TxTransfer, granter.PubKey(), 1, 10,
+		core.TransferPayload{To: receiver.PubKey(), Amount: 95})
+	if err := execTx(t, exec, tx, 2, proposer.PubKey()); err == nil {
+		acc, _ := state.GetAccount(granter.PubKey())
+		t.Fatalf("fee is paid from the granter's balance and must count toward max_amount; granter balance now %d", acc.Balance)
+	}
+}
