@@ -46,9 +46,11 @@ func StatePrefixes() []string {
 	return out
 }
 
-type stateSnapshot struct {
-	dirty   map[string][]byte
-	deleted map[string]bool
+type journalEntry struct {
+	key        string
+	prevValue  []byte
+	hadValue   bool
+	wasDeleted bool
 }
 
 // StateDB implements core.State on top of a DB with in-memory write buffer,
@@ -65,7 +67,8 @@ type StateDB struct {
 	db        DB
 	dirty     map[string][]byte
 	deleted   map[string]bool
-	snapshots []stateSnapshot
+	journal   []journalEntry
+	snapshots []int
 }
 
 // NewStateDB creates a StateDB backed by db.
@@ -90,13 +93,23 @@ func (s *StateDB) get(key string) ([]byte, error) {
 }
 
 func (s *StateDB) set(key string, val []byte) {
+	s.record(key)
 	delete(s.deleted, key)
 	s.dirty[key] = val
 }
 
 func (s *StateDB) del(key string) {
+	s.record(key)
 	delete(s.dirty, key)
 	s.deleted[key] = true
+}
+
+func (s *StateDB) record(key string) {
+	if len(s.snapshots) == 0 {
+		return
+	}
+	prev, had := s.dirty[key]
+	s.journal = append(s.journal, journalEntry{key: key, prevValue: prev, hadValue: had, wasDeleted: s.deleted[key]})
 }
 
 // ---- Account ----
@@ -442,49 +455,34 @@ func (s *StateDB) BlockUnlock() { s.blockMu.Unlock() }
 
 // ---- Snapshot / Rollback / Commit ----
 
-// Snapshot saves the current write buffer and returns a snapshot ID.
 func (s *StateDB) Snapshot() (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	snap := stateSnapshot{
-		dirty:   make(map[string][]byte, len(s.dirty)),
-		deleted: make(map[string]bool, len(s.deleted)),
-	}
-	for k, v := range s.dirty {
-		cp := make([]byte, len(v))
-		copy(cp, v)
-		snap.dirty[k] = cp
-	}
-	for k, v := range s.deleted {
-		snap.deleted[k] = v
-	}
-	s.snapshots = append(s.snapshots, snap)
+	s.snapshots = append(s.snapshots, len(s.journal))
 	return len(s.snapshots) - 1, nil
 }
 
-// RevertToSnapshot restores the write buffer to a previously saved snapshot.
-// The snapshot maps are deep-copied so that subsequent writes cannot corrupt them.
 func (s *StateDB) RevertToSnapshot(id int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if id < 0 || id >= len(s.snapshots) {
 		return fmt.Errorf("invalid snapshot id %d", id)
 	}
-	snap := s.snapshots[id]
-
-	dirty := make(map[string][]byte, len(snap.dirty))
-	for k, v := range snap.dirty {
-		cp := make([]byte, len(v))
-		copy(cp, v)
-		dirty[k] = cp
+	mark := s.snapshots[id]
+	for i := len(s.journal) - 1; i >= mark; i-- {
+		e := s.journal[i]
+		if e.hadValue {
+			s.dirty[e.key] = e.prevValue
+		} else {
+			delete(s.dirty, e.key)
+		}
+		if e.wasDeleted {
+			s.deleted[e.key] = true
+		} else {
+			delete(s.deleted, e.key)
+		}
 	}
-	deleted := make(map[string]bool, len(snap.deleted))
-	for k, v := range snap.deleted {
-		deleted[k] = v
-	}
-
-	s.dirty = dirty
-	s.deleted = deleted
+	s.journal = s.journal[:mark]
 	s.snapshots = s.snapshots[:id]
 	return nil
 }
@@ -571,6 +569,7 @@ func (s *StateDB) Commit() error {
 	}
 	s.dirty = make(map[string][]byte)
 	s.deleted = make(map[string]bool)
+	s.journal = nil
 	s.snapshots = nil
 	return nil
 }
