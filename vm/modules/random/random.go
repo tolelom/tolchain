@@ -24,8 +24,9 @@ func handleRandomCommit(ctx *vm.Context, payload json.RawMessage) error {
 	if p.CommitID == "" || p.CommitHash == "" {
 		return errors.New("commit_id and commit_hash required")
 	}
-	if _, err := hex.DecodeString(p.CommitHash); err != nil {
-		return fmt.Errorf("commit_hash must be hex: %w", err)
+	// Reveal compares against crypto.Hash, which is 64-char lowercase hex.
+	if b, err := hex.DecodeString(p.CommitHash); err != nil || len(b) != 32 || hex.EncodeToString(b) != p.CommitHash {
+		return errors.New("commit_hash must be 64-char lowercase hex (sha256)")
 	}
 
 	// Check for duplicate.

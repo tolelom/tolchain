@@ -424,3 +424,18 @@ func TestRandomReveal_EmptyFields(t *testing.T) {
 		t.Fatal("expected error for empty secret")
 	}
 }
+
+func TestRandomCommit_RejectsCommitHashThatCanNeverMatch(t *testing.T) {
+	_, pub, _ := crypto.GenerateKeyPair()
+	valid := crypto.Hash([]byte("my-secret"))
+	for name, h := range map[string]string{
+		"uppercase": strings.ToUpper(valid),
+		"short":     valid[:32],
+	} {
+		ctx := newCtx(t, testutil.NewStateDB(), pub.Hex())
+		payload, _ := json.Marshal(core.RandomCommitPayload{CommitID: "c1", CommitHash: h})
+		if err := handleRandomCommit(ctx, payload); err == nil {
+			t.Errorf("%s commit_hash can never equal a reveal's sha256 hex; it must be rejected", name)
+		}
+	}
+}

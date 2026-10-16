@@ -44,7 +44,8 @@ func (priv PrivateKey) Public() PublicKey {
 	return PublicKey(ed25519.PrivateKey(priv).Public().(ed25519.PublicKey))
 }
 
-// PubKeyFromHex decodes a hex-encoded public key.
+// PubKeyFromHex decodes a lowercase hex-encoded public key. Pubkey hex is an
+// account address, so only the canonical lowercase spelling is accepted.
 func PubKeyFromHex(s string) (PublicKey, error) {
 	b, err := hex.DecodeString(s)
 	if err != nil {
@@ -52,6 +53,9 @@ func PubKeyFromHex(s string) (PublicKey, error) {
 	}
 	if len(b) != ed25519.PublicKeySize {
 		return nil, fmt.Errorf("pubkey must be %d bytes, got %d", ed25519.PublicKeySize, len(b))
+	}
+	if hex.EncodeToString(b) != s {
+		return nil, fmt.Errorf("pubkey hex must be lowercase")
 	}
 	return PublicKey(b), nil
 }

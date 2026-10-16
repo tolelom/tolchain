@@ -55,3 +55,19 @@ func TestValidate_RejectsEmptyOperators(t *testing.T) {
 		t.Fatalf("a chain with no operators would reject every mint and session; want an operators error, got %v", err)
 	}
 }
+
+func TestValidate_RejectsUppercaseKeys(t *testing.T) {
+	for _, field := range []string{"validators", "operators"} {
+		cfg := validConfig(t)
+		upper := strings.ToUpper(validatorHex(t))
+		if field == "validators" {
+			cfg.Validators = []string{upper}
+		} else {
+			cfg.Operators = []string{upper}
+		}
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), field+"[0]") {
+			t.Errorf("uppercase key never matches a lowercase tx sender; want %s[0] error, got %v", field, err)
+		}
+	}
+}
