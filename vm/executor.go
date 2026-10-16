@@ -201,10 +201,6 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction, emitter even
 		EffectiveSender: effectiveSender,
 		BlockHash:       e.blockHash,
 	}
-	// The fee leaves the granter's balance too, so it counts toward max_amount.
-	if err := ChargeDelegationAmount(ctx, tx.Fee); err != nil {
-		return fmt.Errorf("delegation: %w", err)
-	}
 
 	acc, err := e.state.GetAccount(effectiveSender)
 	if err != nil {
@@ -221,6 +217,10 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction, emitter even
 	// This means the account has exhausted all nonces.
 	if acc.Nonce == math.MaxUint64 {
 		return fmt.Errorf("nonce overflow for account %s: %w", effectiveSender, core.ErrNonceOverflow)
+	}
+	// The fee leaves the granter's balance too, so it counts toward max_amount.
+	if err := ChargeDelegationAmount(ctx, tx.Fee); err != nil {
+		return fmt.Errorf("delegation: %w", err)
 	}
 	acc.Balance -= tx.Fee
 	acc.Nonce++

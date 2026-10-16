@@ -1,6 +1,8 @@
 package tests
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -382,8 +384,42 @@ func TestDelegation_FeeCountsTowardMaxAmount(t *testing.T) {
 	// 95 transferred + 10 fee leaves the granter's account: 105 > max_amount 100.
 	tx, _ := grantee.NewDelegatedTx(delegationChainID, core.TxTransfer, granter.PubKey(), 1, 10,
 		core.TransferPayload{To: receiver.PubKey(), Amount: 95})
-	if err := execTx(t, exec, tx, 2, proposer.PubKey()); err == nil {
+	if err := execTx(t, exec, tx, 2, proposer.PubKey()); err == nil || !strings.Contains(err.Error(), "max_amount") {
 		acc, _ := state.GetAccount(granter.PubKey())
-		t.Fatalf("fee is paid from the granter's balance and must count toward max_amount; granter balance now %d", acc.Balance)
+		t.Fatalf("fee is paid from the granter's balance and must count toward max_amount; got %v, granter balance now %d", err, acc.Balance)
+	}
+}
+
+func TestDelegation_FeeUpToMaxAmountSucceeds(t *testing.T) {
+	_, exec, granter, grantee := setupDelegationTest(t)
+	receiver, _ := wallet.Generate()
+	proposer, _ := wallet.Generate()
+
+	grantTx, _ := granter.GrantDelegation(delegationChainID, grantee.PubKey(), []string{"transfer"}, 0, 0, 100, 0, 0)
+	if err := execTx(t, exec, grantTx, 1, proposer.PubKey()); err != nil {
+		t.Fatal(err)
+	}
+	tx, _ := grantee.NewDelegatedTx(delegationChainID, core.TxTransfer, granter.PubKey(), 1, 10,
+		core.TransferPayload{To: receiver.PubKey(), Amount: 90})
+	if err := execTx(t, exec, tx, 2, proposer.PubKey()); err != nil {
+		t.Fatalf("90 transferred + 10 fee is exactly max_amount 100 and must succeed: %v", err)
+	}
+}
+
+func TestDelegation_BadNonceReportedBeforeMaxAmount(t *testing.T) {
+	_, exec, granter, grantee := setupDelegationTest(t)
+	receiver, _ := wallet.Generate()
+	proposer, _ := wallet.Generate()
+
+	grantTx, _ := granter.GrantDelegation(delegationChainID, grantee.PubKey(), []string{"transfer"}, 0, 0, 5, 0, 0)
+	if err := execTx(t, exec, grantTx, 1, proposer.PubKey()); err != nil {
+		t.Fatal(err)
+	}
+	// Future nonce (granter is at 1) and a fee above max_amount.
+	tx, _ := grantee.NewDelegatedTx(delegationChainID, core.TxTransfer, granter.PubKey(), 7, 10,
+		core.TransferPayload{To: receiver.PubKey(), Amount: 1})
+	err := execTx(t, exec, tx, 2, proposer.PubKey())
+	if !errors.Is(err, core.ErrInvalidNonce) {
+		t.Fatalf("the producer keeps future-nonce txs by recognising invalid nonce, so it must win over the limit check; got %v", err)
 	}
 }
