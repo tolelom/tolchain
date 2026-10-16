@@ -115,7 +115,8 @@ func (e *Executor) executeTxLocked(block *core.Block, tx *core.Transaction) erro
 		return fmt.Errorf("snapshot: %w", err)
 	}
 
-	if err := e.applyTx(block, tx); err != nil {
+	txEvents := events.NewBuffer()
+	if err := e.applyTx(block, tx, txEvents); err != nil {
 		if revertErr := e.state.RevertToSnapshot(snapID); revertErr != nil {
 			return fmt.Errorf("revert snapshot after tx failure: %w (revert: %v)", err, revertErr)
 		}
@@ -131,6 +132,7 @@ func (e *Executor) executeTxLocked(block *core.Block, tx *core.Transaction) erro
 	}
 
 	if e.emitter != nil {
+		txEvents.Flush(e.emitter)
 		e.emitter.Emit(events.Event{
 			Type:        events.EventTxExecuted,
 			TxID:        tx.ID,
@@ -180,7 +182,7 @@ func (e *Executor) validateDelegation(block *core.Block, tx *core.Transaction) e
 }
 
 // applyTx deducts the fee, increments the nonce, then dispatches to the handler.
-func (e *Executor) applyTx(block *core.Block, tx *core.Transaction) error {
+func (e *Executor) applyTx(block *core.Block, tx *core.Transaction, emitter events.EventEmitter) error {
 	effectiveSender := tx.From
 	if tx.OnBehalfOf != "" {
 		if err := e.validateDelegation(block, tx); err != nil {
@@ -243,7 +245,7 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction) error {
 		State:           e.state,
 		Block:           block,
 		Tx:              tx,
-		Emitter:         e.emitter,
+		Emitter:         emitter,
 		Operators:       e.operators,
 		MaxTotalSupply:  e.maxTotalSupply,
 		EffectiveSender: effectiveSender,
