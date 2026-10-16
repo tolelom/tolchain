@@ -251,5 +251,14 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction, emitter even
 		EffectiveSender: effectiveSender,
 		BlockHash:       e.blockHash,
 	}
+	return runHandler(tx, ctx)
+}
+
+func runHandler(tx *core.Transaction, ctx *Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("handler panic for %s: %v", tx.Type, r)
+		}
+	}()
 	return globalRegistry.Execute(tx.Type, ctx, tx.Payload)
 }

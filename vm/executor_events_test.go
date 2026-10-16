@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tolelom/tolchain/core"
 	"github.com/tolelom/tolchain/events"
@@ -65,5 +66,45 @@ func TestEvents_SuccessfulTxKeepsHandlerEventsBeforeResult(t *testing.T) {
 	evts := em.get()
 	if len(evts) != 2 || evts[0].Type != events.EventAssetMinted || evts[1].Type != events.EventTxExecuted {
 		t.Fatalf("want [asset_minted, tx_executed], got %+v", evts)
+	}
+}
+
+var (
+	testTxTypePanic = core.TxType("__test_panic__")
+	panicOnce       sync.Once
+)
+
+func TestExecuteTx_HandlerPanicFailsTxAndRollsBack(t *testing.T) {
+	registerTestHandlers()
+	panicOnce.Do(func() {
+		globalRegistry.Register(testTxTypePanic, func(ctx *Context, payload json.RawMessage) error {
+			ctx.State.SetAccount(&core.Account{Address: "touched", Balance: 1})
+			panic("handler bug")
+		})
+	})
+	state := testutil.NewStateDB()
+	exec := NewExecutor(state, &eventCollector{})
+	priv, pubHex := genKey(t)
+	state.SetAccount(&core.Account{Address: pubHex, Balance: 1000})
+
+	tx := signedTx(t, priv, pubHex, 0, 0, testTxTypePanic)
+	if err := exec.ExecuteBlock(makeBlock(pubHex, tx)); err == nil {
+		t.Fatal("a panicking handler must fail the tx")
+	}
+	if acc, _ := state.GetAccount("touched"); acc.Balance != 0 {
+		t.Fatal("writes made before the panic must be rolled back")
+	}
+	if acc, _ := state.GetAccount(pubHex); acc.Nonce != 0 {
+		t.Fatal("nonce must be rolled back")
+	}
+	done := make(chan struct{})
+	go func() {
+		exec.ExecuteTx(makeBlock(pubHex), signedTx(t, priv, pubHex, 0, 0, testTxType))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("executor stayed locked after a handler panic")
 	}
 }
