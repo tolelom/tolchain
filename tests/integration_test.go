@@ -136,6 +136,7 @@ func startTestNode(t *testing.T, w *wallet.Wallet) (rpcURL string, cleanup func(
 	idx := indexer.New(db, emitter)
 	mempool := core.NewMempool(cfg.Mempool.MaxSize, cfg.Mempool.MaxTxAgeSec, cfg.Mempool.MaxFutureSec)
 	exec := vm.NewExecutor(stateDB, emitter)
+	exec.SetOperators([]string{w.PubKey()})
 	poa := consensus.New(cfg, bc, stateDB, mempool, exec, emitter, w.PrivKey())
 
 	// P2P on random port

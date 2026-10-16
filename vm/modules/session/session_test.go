@@ -28,7 +28,8 @@ func newCtx(t *testing.T, state core.State, fromPubHex string) *vm.Context {
 		PrevHash:  "abc123",
 	}}
 	tx := &core.Transaction{ID: "tx1", From: fromPubHex, Type: core.TxSessionOpen}
-	return &vm.Context{State: state, Block: block, Tx: tx, Emitter: emitter, EffectiveSender: fromPubHex}
+	return &vm.Context{State: state, Block: block, Tx: tx, Emitter: emitter, EffectiveSender: fromPubHex,
+		Operators: map[string]bool{fromPubHex: true}}
 }
 
 // ---------- Session Open Tests ----------
@@ -572,8 +573,6 @@ func TestSessionOpen_ZeroStakes(t *testing.T) {
 
 	ctx := newCtx(t, state, p1Hex)
 	// Sender is the only player, so no consent signatures needed.
-	// Also, the sender must be an operator if operators are set,
-	// so we leave ctx.Operators nil (no restriction).
 	payload, _ := json.Marshal(core.SessionOpenPayload{
 		SessionID: "s_zero",
 		GameID:    "game1",
@@ -902,4 +901,3 @@ func TestSessionCancel_NilEmitter(t *testing.T) {
 		t.Fatalf("expected success with nil emitter: %v", err)
 	}
 }
-

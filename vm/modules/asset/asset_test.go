@@ -21,7 +21,8 @@ func newCtx(t *testing.T, state core.State, fromPubHex string) *vm.Context {
 		PrevHash:  "abc123",
 	}}
 	tx := &core.Transaction{ID: "tx1", From: fromPubHex, Type: core.TxMintAsset}
-	return &vm.Context{State: state, Block: block, Tx: tx, Emitter: emitter, EffectiveSender: fromPubHex}
+	return &vm.Context{State: state, Block: block, Tx: tx, Emitter: emitter, EffectiveSender: fromPubHex,
+		Operators: map[string]bool{fromPubHex: true}}
 }
 
 // ---------- Mint Tests ----------

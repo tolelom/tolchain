@@ -21,6 +21,7 @@ func validConfig(t *testing.T) *Config {
 	}
 	cfg := DefaultConfig()
 	cfg.Validators = []string{pub.Hex()}
+	cfg.Operators = []string{pub.Hex()}
 	return cfg
 }
 
@@ -102,6 +103,7 @@ func TestLoad_ValidConfig(t *testing.T) {
 		P2PPort:     30303,
 		MaxBlockTxs: 100,
 		Validators:  []string{v},
+		Operators:   []string{v},
 		Genesis: GenesisConfig{
 			ChainID: "test-chain",
 			Alloc:   map[string]uint64{v: 1000},
@@ -131,6 +133,7 @@ func TestLoad_DefaultsApplied(t *testing.T) {
 		"node_id":    "minimal",
 		"data_dir":   "./data",
 		"validators": []string{v},
+		"operators":  []string{v},
 		"genesis":    map[string]any{"chain_id": "test"},
 	}
 	data, _ := json.Marshal(raw)

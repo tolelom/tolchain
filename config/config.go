@@ -117,7 +117,7 @@ type Config struct {
 	P2PPort         int             `json:"p2p_port"`
 	MaxBlockTxs     int             `json:"max_block_txs"`       // max transactions per block; 0 → 500
 	Validators      []string        `json:"validators"`          // authorised proposer pubkey hexes
-	Operators       []string        `json:"operators,omitempty"` // authorised game operator pubkey hexes (empty → no restriction)
+	Operators       []string        `json:"operators,omitempty"` // authorised game operator pubkey hexes (must not be empty)
 	Genesis         GenesisConfig   `json:"genesis"`
 	SeedPeers       []SeedPeer      `json:"seed_peers,omitempty"`        // initial peers to connect to
 	TLS             *TLSConfig      `json:"tls,omitempty"`               // nil → plain TCP
@@ -288,6 +288,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("validators[%d]: duplicate pubkey %q", i, v)
 		}
 		seen[v] = true
+	}
+	if len(c.Operators) == 0 {
+		return fmt.Errorf("operators list must not be empty")
 	}
 	for i, o := range c.Operators {
 		if b, err := hex.DecodeString(o); err != nil || len(b) != 32 {

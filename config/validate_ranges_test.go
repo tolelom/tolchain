@@ -46,3 +46,12 @@ func TestValidate_RejectsMalformedOperator(t *testing.T) {
 		t.Fatalf("want operators[1] error, got %v", err)
 	}
 }
+
+func TestValidate_RejectsEmptyOperators(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Operators = nil
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "operators") {
+		t.Fatalf("a chain with no operators would reject every mint and session; want an operators error, got %v", err)
+	}
+}

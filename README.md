@@ -140,7 +140,7 @@ Create `config.json` (or omit for dev defaults):
 | `p2p_port` | `30303` | P2P TCP port |
 | `max_block_txs` | `500` | Max transactions per block |
 | `validators` | — | Validator public keys (required) |
-| `operators` | — | Game operator keys (empty = no restriction) |
+| `operators` | — | Game operator keys (required, must not be empty; dev mode registers the node key) |
 | `genesis.timestamp` | `1735689600000000000` | Genesis block timestamp (Unix ns). Part of the genesis hash — must be identical on every node |
 | `rpc_auth_token` | — | Bearer token for RPC auth (empty = no auth) |
 | `prune_keep_blocks` | `0` | Keep only the latest N blocks (0 = no pruning). Must be 0 or at least 102, because `random_reveal` reads the hash of a block up to 102 blocks back |

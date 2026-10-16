@@ -16,13 +16,9 @@ func SafeAdd(a, b uint64) (uint64, error) {
 	return a + b, nil
 }
 
-// RequireOperator returns an error if operators are configured and the
-// transaction sender is not among them. When no operators are configured
-// (nil or empty map), all senders are permitted.
+// RequireOperator returns an error unless the transaction sender is a
+// configured operator. With no operators configured nobody is permitted.
 func RequireOperator(ctx *Context) error {
-	if len(ctx.Operators) == 0 {
-		return nil
-	}
 	if !ctx.Operators[ctx.EffectiveSender] {
 		return fmt.Errorf("not an operator: %s: %w", ctx.EffectiveSender, core.ErrUnauthorized)
 	}
