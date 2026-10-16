@@ -296,6 +296,11 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("operators[%d]: must be 64-char lowercase hex (32 bytes ed25519 pubkey), got %q", i, o)
 		}
 	}
+	for addr := range c.Genesis.Alloc {
+		if _, err := crypto.PubKeyFromHex(addr); err != nil {
+			return fmt.Errorf("genesis.alloc: key must be 64-char lowercase hex (32 bytes ed25519 pubkey), got %q", addr)
+		}
+	}
 	for i, e := range c.RPC.TrustedProxies {
 		if strings.Contains(e, "/") {
 			if _, _, err := net.ParseCIDR(e); err != nil {
