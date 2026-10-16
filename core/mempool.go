@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -91,26 +92,49 @@ func (m *Mempool) Get(id string) (*Transaction, bool) {
 	return tx, ok
 }
 
-// Pending returns up to n pending transactions in insertion order.
-// Expired transactions (timestamp older than maxTxAge) are skipped, so the
-// proposer never picks them. Use EvictExpired() to actually remove them.
 func (m *Mempool) Pending(n int) []*Transaction {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	now := time.Now().UnixNano()
-	result := make([]*Transaction, 0, n)
+	live := make([]*Transaction, 0, len(m.ord))
 	for _, id := range m.ord {
 		if tx, ok := m.txs[id]; ok {
 			if now > tx.Timestamp && now-tx.Timestamp > m.maxTxAge {
-				continue // expired — skip, EvictExpired will clean up
+				continue
 			}
-			result = append(result, tx)
-			if len(result) >= n {
-				break
-			}
+			live = append(live, tx)
 		}
 	}
-	return result
+	sortEachAccountByNonce(live)
+	if len(live) > n {
+		live = live[:n]
+	}
+	return live
+}
+
+func sortEachAccountByNonce(txs []*Transaction) {
+	slots := make(map[string][]int)
+	for i, tx := range txs {
+		account := tx.NonceAccount()
+		slots[account] = append(slots[account], i)
+	}
+	for _, idx := range slots {
+		group := make([]*Transaction, len(idx))
+		for j, i := range idx {
+			group[j] = txs[i]
+		}
+		sort.SliceStable(group, func(a, b int) bool { return group[a].Nonce < group[b].Nonce })
+		for j, i := range idx {
+			txs[i] = group[j]
+		}
+	}
+}
+
+func (tx *Transaction) NonceAccount() string {
+	if tx.OnBehalfOf != "" {
+		return tx.OnBehalfOf
+	}
+	return tx.From
 }
 
 // EvictExpired removes transactions whose timestamp is older than the

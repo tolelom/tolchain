@@ -105,12 +105,22 @@ func (s *produceBlock) ExecuteTxs() error {
 		if txErr := s.p.exec.ExecuteTx(s.block, tx); txErr != nil {
 			slog.Warn("skipping failed tx", "component", "consensus", "tx_id", tx.ID, "error", txErr)
 			metrics.TxFailed.Inc()
-			s.failedIDs = append(s.failedIDs, tx.ID)
+			if !s.waitsForEarlierNonce(tx, txErr) {
+				s.failedIDs = append(s.failedIDs, tx.ID)
+			}
 			continue
 		}
 		s.successTxs = append(s.successTxs, tx)
 	}
 	return nil
+}
+
+func (s *produceBlock) waitsForEarlierNonce(tx *core.Transaction, txErr error) bool {
+	if !errors.Is(txErr, core.ErrInvalidNonce) {
+		return false
+	}
+	acc, err := s.p.state.GetAccount(tx.NonceAccount())
+	return err == nil && tx.Nonce > acc.Nonce
 }
 
 func (s *produceBlock) RestoreEmitter() error {
