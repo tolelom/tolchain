@@ -322,3 +322,16 @@ func TestValidateBlock_NoValidators(t *testing.T) {
 		t.Error("should reject block when no validators configured")
 	}
 }
+
+func TestValidateBlock_RequiresStateRoot(t *testing.T) {
+	poa, bc, w := setupPoA(t)
+
+	tip := bc.Tip()
+	block := core.NewBlock(testChainID, tip.Header.Height+1, tip.Hash, w.PubKey(), nil)
+	block.Header.StateRoot = ""
+	block.Sign(w.PrivKey())
+
+	if err := poa.ValidateBlock(block); err == nil {
+		t.Fatal("a block without state_root skips the state check on every syncing node; it must be rejected")
+	}
+}

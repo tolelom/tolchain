@@ -112,7 +112,7 @@ func TestValidateBlock_OK(t *testing.T) {
 
 	tip := bc.Tip()
 	block := core.NewBlock(testChainID, tip.Header.Height+1, tip.Hash, w.PubKey(), nil)
-	block.Header.StateRoot = ""
+	block.Header.StateRoot = "any-root"
 	block.Sign(w.PrivKey())
 
 	// Validating a correctly built block should succeed.
