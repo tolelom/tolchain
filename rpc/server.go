@@ -164,8 +164,12 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	resp := s.handler.Dispatch(req)
-	metrics.RPCRequests.WithLabelValues(req.Method).Inc()
-	metrics.RPCDuration.WithLabelValues(req.Method).Observe(time.Since(start).Seconds())
+	method := req.Method
+	if resp.Error != nil && resp.Error.Code == CodeMethodNotFound {
+		method = "unknown"
+	}
+	metrics.RPCRequests.WithLabelValues(method).Inc()
+	metrics.RPCDuration.WithLabelValues(method).Observe(time.Since(start).Seconds())
 	if resp.Error != nil {
 		metrics.RPCErrors.WithLabelValues(fmt.Sprint(resp.Error.Code)).Inc()
 	}
