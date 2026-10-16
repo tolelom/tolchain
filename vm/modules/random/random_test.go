@@ -48,7 +48,6 @@ func TestRandomCommit_Success(t *testing.T) {
 	commitHash := crypto.Hash([]byte(secret))
 
 	ctx := newCtx(t, state, pubHex)
-	// No operators set = no restriction.
 	payload, _ := json.Marshal(core.RandomCommitPayload{
 		CommitID:   "c1",
 		CommitHash: commitHash,
