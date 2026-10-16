@@ -34,7 +34,6 @@ func TestGrantReward_TokensOnly(t *testing.T) {
 	recipientHex := recipientPub.Hex()
 
 	ctx := newCtx(t, state, pubHex)
-	// No operators configured = no restriction.
 	payload, _ := json.Marshal(core.GrantRewardPayload{
 		Recipient:   recipientHex,
 		TokenAmount: 500,
@@ -328,5 +327,22 @@ func TestGrantReward_NilEmitterWithAssets(t *testing.T) {
 
 	if err := handleGrantReward(ctx, payload); err != nil {
 		t.Fatalf("expected success with nil emitter and assets: %v", err)
+	}
+}
+
+func TestGrantReward_TracksTotalSupplyWithoutCap(t *testing.T) {
+	state := testutil.NewStateDB()
+	_, pub, _ := crypto.GenerateKeyPair()
+	_, recipientPub, _ := crypto.GenerateKeyPair()
+
+	ctx := newCtx(t, state, pub.Hex())
+	payload, _ := json.Marshal(core.GrantRewardPayload{Recipient: recipientPub.Hex(), TokenAmount: 500})
+	if err := handleGrantReward(ctx, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	supply, _ := state.GetAccount("system:total_supply")
+	if supply.Balance != 500 {
+		t.Fatalf("total supply must count every minted token so a cap enabled later starts from the truth, got %d", supply.Balance)
 	}
 }

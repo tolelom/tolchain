@@ -39,23 +39,23 @@ func handleGrantReward(ctx *vm.Context, payload json.RawMessage) error {
 		if err := vm.ChargeDelegationAmount(ctx, p.TokenAmount); err != nil {
 			return err
 		}
-		// Enforce total supply cap if configured.
-		if ctx.MaxTotalSupply > 0 {
-			supply, err := ctx.State.GetAccount("system:total_supply")
-			if err != nil {
-				return fmt.Errorf("get total supply: %w", err)
-			}
-			// Overflow-safe cap check: reject if the amount alone exceeds the
-			// cap (would underflow the subtraction below) or if the remaining
-			// headroom is too small. Never computes supply.Balance+p.TokenAmount,
-			// which could wrap around uint64.
-			if p.TokenAmount > ctx.MaxTotalSupply || supply.Balance > ctx.MaxTotalSupply-p.TokenAmount {
-				return errors.New("total supply cap exceeded")
-			}
-			supply.Balance += p.TokenAmount
-			if err := ctx.State.SetAccount(supply); err != nil {
-				return fmt.Errorf("update total supply: %w", err)
-			}
+		// Track total supply always, so a cap enabled later starts from the
+		// real minted amount; enforce the cap when one is configured.
+		supply, err := ctx.State.GetAccount("system:total_supply")
+		if err != nil {
+			return fmt.Errorf("get total supply: %w", err)
+		}
+		// Overflow-safe cap check: reject if the amount alone exceeds the
+		// cap (would underflow the subtraction below) or if the remaining
+		// headroom is too small.
+		if ctx.MaxTotalSupply > 0 && (p.TokenAmount > ctx.MaxTotalSupply || supply.Balance > ctx.MaxTotalSupply-p.TokenAmount) {
+			return errors.New("total supply cap exceeded")
+		}
+		if supply.Balance, err = vm.SafeAdd(supply.Balance, p.TokenAmount); err != nil {
+			return fmt.Errorf("total supply overflow: %w", err)
+		}
+		if err := ctx.State.SetAccount(supply); err != nil {
+			return fmt.Errorf("update total supply: %w", err)
 		}
 
 		acc, err := ctx.State.GetAccount(p.Recipient)
