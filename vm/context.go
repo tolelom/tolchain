@@ -26,7 +26,6 @@ type EventData interface {
 	Map() map[string]any
 }
 
-// Emit publishes an event for the current tx.
 func (c *Context) Emit(typ events.EventType, data EventData) {
 	if c.Emitter == nil {
 		return
