@@ -14,16 +14,13 @@ import (
 	"github.com/tolelom/tolchain/crypto"
 )
 
-// registerPrefix records a state-key prefix into statePrefixes so that
-// ComputeRoot() always covers it.  All prefix constants must be declared
-// via this function; manually editing statePrefixes is not required.
+// registerPrefix is the only way to declare a state prefix, so ComputeRoot
+// and backups can never miss one.
 func registerPrefix(p string) string {
 	statePrefixes = append(statePrefixes, p)
 	return p
 }
 
-// statePrefixes is populated automatically by registerPrefix() below.
-// ComputeRoot() iterates these prefixes to build the full world-state view.
 var statePrefixes []string
 
 var (
@@ -37,13 +34,15 @@ var (
 	prefixDelegation   = registerPrefix("deleg:")
 )
 
-// StatePrefixes returns a copy of the canonical state-key prefixes used by
-// StateDB. External tools (e.g. cmd/backup) must use this instead of keeping
-// their own list, so that new prefixes are never silently missed.
+// StatePrefixes returns a copy of every prefix that holds world state.
 func StatePrefixes() []string {
 	out := make([]string, len(statePrefixes))
 	copy(out, statePrefixes)
 	return out
+}
+
+func delegationKey(granter, grantee string) string {
+	return prefixDelegation + granter + ":" + grantee
 }
 
 type journalEntry struct {
@@ -53,14 +52,12 @@ type journalEntry struct {
 	wasDeleted bool
 }
 
-// StateDB implements core.State on top of a DB with in-memory write buffer,
-// snapshot/rollback, and deterministic state-root computation.
-// All methods are protected by a mutex for future-proof concurrency safety.
+// StateDB implements core.State over a DB with an in-memory write buffer that
+// is flushed only by Commit.
 //
-// blockMu is a separate RWMutex that provides read-snapshot isolation:
-// block execution (consensus, sync) holds the write lock, while RPC state
-// queries hold the read lock. This prevents RPC from observing partially-
-// applied state during block execution.
+// mu guards the buffer. blockMu is separate: block execution holds it for
+// writing across the whole execute-commit cycle and RPC reads hold it for
+// reading, so queries never see a half-applied block.
 type StateDB struct {
 	mu        sync.Mutex
 	blockMu   sync.RWMutex
@@ -71,7 +68,6 @@ type StateDB struct {
 	snapshots []int
 }
 
-// NewStateDB creates a StateDB backed by db.
 func NewStateDB(db DB) *StateDB {
 	return &StateDB{
 		db:      db,
@@ -79,8 +75,6 @@ func NewStateDB(db DB) *StateDB {
 		deleted: make(map[string]bool),
 	}
 }
-
-// ---- internal helpers ----
 
 func (s *StateDB) get(key string) ([]byte, error) {
 	if s.deleted[key] {
@@ -112,348 +106,187 @@ func (s *StateDB) record(key string) {
 	s.journal = append(s.journal, journalEntry{key: key, prevValue: prev, hadValue: had, wasDeleted: s.deleted[key]})
 }
 
-// ---- Account ----
-
-func (s *StateDB) GetAccount(address string) (*core.Account, error) {
+func getRecord[T any](s *StateDB, key string) (*T, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := s.get(prefixAccount + address)
-	if errors.Is(err, core.ErrNotFound) {
-		return &core.Account{Address: address}, nil // zero-value account
-	}
+	data, err := s.get(key)
+	s.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
-	var acc core.Account
-	if err := json.Unmarshal(data, &acc); err != nil {
+	var v T
+	if err := json.Unmarshal(data, &v); err != nil {
 		return nil, err
 	}
-	return &acc, nil
+	return &v, nil
+}
+
+func (s *StateDB) putRecord(key string, v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.set(key, data)
+	return nil
+}
+
+func (s *StateDB) deleteRecord(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.del(key)
+	return nil
+}
+
+// GetAccount returns a zero-balance account for an unknown address.
+func (s *StateDB) GetAccount(address string) (*core.Account, error) {
+	acc, err := getRecord[core.Account](s, prefixAccount+address)
+	if errors.Is(err, core.ErrNotFound) {
+		return &core.Account{Address: address}, nil
+	}
+	return acc, err
 }
 
 func (s *StateDB) SetAccount(acc *core.Account) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := json.Marshal(acc)
-	if err != nil {
-		return err
-	}
-	s.set(prefixAccount+acc.Address, data)
-	return nil
+	return s.putRecord(prefixAccount+acc.Address, acc)
 }
 
-// ---- Asset ----
-
 func (s *StateDB) GetAsset(id string) (*core.Asset, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := s.get(prefixAsset + id)
-	if err != nil {
-		return nil, err
-	}
-	var asset core.Asset
-	if err := json.Unmarshal(data, &asset); err != nil {
-		return nil, err
-	}
-	return &asset, nil
+	return getRecord[core.Asset](s, prefixAsset+id)
 }
 
 func (s *StateDB) SetAsset(asset *core.Asset) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := json.Marshal(asset)
-	if err != nil {
-		return err
-	}
-	s.set(prefixAsset+asset.ID, data)
-	return nil
+	return s.putRecord(prefixAsset+asset.ID, asset)
 }
 
 func (s *StateDB) DeleteAsset(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.del(prefixAsset + id)
-	return nil
+	return s.deleteRecord(prefixAsset + id)
 }
 
-// ---- Template ----
-
 func (s *StateDB) GetTemplate(id string) (*core.AssetTemplate, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := s.get(prefixTemplate + id)
-	if err != nil {
-		return nil, err
-	}
-	var t core.AssetTemplate
-	if err := json.Unmarshal(data, &t); err != nil {
-		return nil, err
-	}
-	return &t, nil
+	return getRecord[core.AssetTemplate](s, prefixTemplate+id)
 }
 
 func (s *StateDB) SetTemplate(t *core.AssetTemplate) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := json.Marshal(t)
-	if err != nil {
-		return err
-	}
-	s.set(prefixTemplate+t.ID, data)
-	return nil
+	return s.putRecord(prefixTemplate+t.ID, t)
 }
 
-// ---- Session ----
-
 func (s *StateDB) GetSession(id string) (*core.Session, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := s.get(prefixSession + id)
-	if err != nil {
-		return nil, err
-	}
-	var sess core.Session
-	if err := json.Unmarshal(data, &sess); err != nil {
-		return nil, err
-	}
-	return &sess, nil
+	return getRecord[core.Session](s, prefixSession+id)
 }
 
 func (s *StateDB) SetSession(sess *core.Session) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := json.Marshal(sess)
-	if err != nil {
-		return err
-	}
-	s.set(prefixSession+sess.ID, data)
-	return nil
+	return s.putRecord(prefixSession+sess.ID, sess)
 }
 
-// ---- Market ----
-
 func (s *StateDB) GetListing(id string) (*core.MarketListing, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := s.get(prefixListing + id)
-	if err != nil {
-		return nil, err
-	}
-	var l core.MarketListing
-	if err := json.Unmarshal(data, &l); err != nil {
-		return nil, err
-	}
-	return &l, nil
+	return getRecord[core.MarketListing](s, prefixListing+id)
 }
 
 func (s *StateDB) SetListing(l *core.MarketListing) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := json.Marshal(l)
-	if err != nil {
-		return err
-	}
-	s.set(prefixListing+l.ID, data)
-	return nil
+	return s.putRecord(prefixListing+l.ID, l)
 }
 
-// ---- Inventory ----
-
+// GetInventory returns an empty inventory for an owner who never equipped.
 func (s *StateDB) GetInventory(owner string) (*core.Inventory, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := s.get(prefixInventory + owner)
+	inv, err := getRecord[core.Inventory](s, prefixInventory+owner)
 	if errors.Is(err, core.ErrNotFound) {
 		return &core.Inventory{Owner: owner, Slots: make(map[string]string)}, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	var inv core.Inventory
-	if err := json.Unmarshal(data, &inv); err != nil {
-		return nil, err
-	}
-	return &inv, nil
+	return inv, err
 }
 
 func (s *StateDB) SetInventory(inv *core.Inventory) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := json.Marshal(inv)
-	if err != nil {
-		return err
-	}
-	s.set(prefixInventory+inv.Owner, data)
-	return nil
+	return s.putRecord(prefixInventory+inv.Owner, inv)
 }
 
-// ---- Random Commitment ----
-
 func (s *StateDB) GetRandomCommitment(id string) (*core.RandomCommitment, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := s.get(prefixRandomCommit + id)
-	if err != nil {
-		return nil, err
-	}
-	var rc core.RandomCommitment
-	if err := json.Unmarshal(data, &rc); err != nil {
-		return nil, err
-	}
-	return &rc, nil
+	return getRecord[core.RandomCommitment](s, prefixRandomCommit+id)
 }
 
 func (s *StateDB) SetRandomCommitment(rc *core.RandomCommitment) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := json.Marshal(rc)
-	if err != nil {
-		return err
-	}
-	s.set(prefixRandomCommit+rc.ID, data)
-	return nil
+	return s.putRecord(prefixRandomCommit+rc.ID, rc)
 }
 
-// ---- Delegation ----
-
 func (s *StateDB) GetDelegation(granter, grantee string) (*core.DelegationGrant, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := s.get(prefixDelegation + granter + ":" + grantee)
-	if err != nil {
-		return nil, err
-	}
-	var grant core.DelegationGrant
-	if err := json.Unmarshal(data, &grant); err != nil {
-		return nil, err
-	}
-	return &grant, nil
+	return getRecord[core.DelegationGrant](s, delegationKey(granter, grantee))
 }
 
 func (s *StateDB) SetDelegation(grant *core.DelegationGrant) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := json.Marshal(grant)
-	if err != nil {
-		return err
-	}
-	s.set(prefixDelegation+grant.Granter+":"+grant.Grantee, data)
-	return nil
+	return s.putRecord(delegationKey(grant.Granter, grant.Grantee), grant)
 }
 
 func (s *StateDB) DeleteDelegation(granter, grantee string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.del(prefixDelegation + granter + ":" + grantee)
-	return nil
+	return s.deleteRecord(delegationKey(granter, grantee))
 }
 
 func (s *StateDB) GetDelegationsByGranter(granter string) ([]*core.DelegationGrant, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	prefix := prefixDelegation + granter + ":"
-	merged := make(map[string][]byte)
-
-	// Scan persisted entries from DB
-	it := s.db.NewIterator([]byte(prefix))
-	for it.Next() {
-		k := string(it.Key())
-		v := make([]byte, len(it.Value()))
-		copy(v, it.Value())
-		merged[k] = v
-	}
-	it.Release()
-	if err := it.Error(); err != nil {
-		return nil, fmt.Errorf("iterator error: %w", err)
-	}
-
-	// Apply in-memory dirty writes
-	for k, v := range s.dirty {
-		if strings.HasPrefix(k, prefix) {
-			merged[k] = v
-		}
-	}
-
-	// Exclude deleted keys
-	for k := range s.deleted {
-		delete(merged, k)
-	}
-
-	grants := make([]*core.DelegationGrant, 0, len(merged))
-	for _, v := range merged {
-		var g core.DelegationGrant
-		if err := json.Unmarshal(v, &g); err != nil {
-			continue
-		}
-		grants = append(grants, &g)
-	}
-	return grants, nil
+	return s.delegations(prefixDelegation+granter+":", func(*core.DelegationGrant) bool { return true })
 }
 
+// GetDelegationsByGrantee scans every grant: keys are ordered by granter.
 func (s *StateDB) GetDelegationsByGrantee(grantee string) ([]*core.DelegationGrant, error) {
+	return s.delegations(prefixDelegation, func(g *core.DelegationGrant) bool { return g.Grantee == grantee })
+}
+
+func (s *StateDB) delegations(prefix string, keep func(*core.DelegationGrant) bool) ([]*core.DelegationGrant, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	merged := make(map[string][]byte)
-
-	// Scan ALL delegation entries from DB
-	it := s.db.NewIterator([]byte(prefixDelegation))
-	for it.Next() {
-		k := string(it.Key())
-		v := make([]byte, len(it.Value()))
-		copy(v, it.Value())
-		merged[k] = v
+	entries, err := s.visibleEntries(prefix)
+	s.mu.Unlock()
+	if err != nil {
+		return nil, err
 	}
-	it.Release()
-	if err := it.Error(); err != nil {
-		return nil, fmt.Errorf("iterator error: %w", err)
-	}
-
-	// Apply in-memory dirty writes
-	for k, v := range s.dirty {
-		if strings.HasPrefix(k, prefixDelegation) {
-			merged[k] = v
-		}
-	}
-
-	// Exclude deleted keys
-	for k := range s.deleted {
-		delete(merged, k)
-	}
-
-	grants := make([]*core.DelegationGrant, 0)
-	for _, v := range merged {
+	grants := make([]*core.DelegationGrant, 0, len(entries))
+	for _, v := range entries {
 		var g core.DelegationGrant
 		if err := json.Unmarshal(v, &g); err != nil {
 			continue
 		}
-		if g.Grantee == grantee {
+		if keep(&g) {
 			grants = append(grants, &g)
 		}
 	}
 	return grants, nil
 }
 
-// ---- Block-level read-snapshot isolation ----
+// visibleEntries returns persisted entries under prefixes overlaid with the
+// write buffer. Caller must hold s.mu.
+func (s *StateDB) visibleEntries(prefixes ...string) (map[string][]byte, error) {
+	merged := make(map[string][]byte)
+	for _, prefix := range prefixes {
+		it := s.db.NewIterator([]byte(prefix))
+		for it.Next() {
+			merged[string(it.Key())] = bytes.Clone(it.Value())
+		}
+		it.Release()
+		if err := it.Error(); err != nil {
+			return nil, fmt.Errorf("iterate state prefix %q: %w", prefix, err)
+		}
+	}
+	for k, v := range s.dirty {
+		if hasAnyPrefix(k, prefixes) {
+			merged[k] = v
+		}
+	}
+	for k := range s.deleted {
+		delete(merged, k)
+	}
+	return merged, nil
+}
 
-// BlockRLock acquires the block-execution read lock. Multiple RPC queries
-// can hold this concurrently, but they will block while a block is being
-// executed (write lock held).
-func (s *StateDB) BlockRLock() { s.blockMu.RLock() }
+func hasAnyPrefix(key string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
+}
 
-// BlockRUnlock releases the block-execution read lock.
+func (s *StateDB) BlockRLock()   { s.blockMu.RLock() }
 func (s *StateDB) BlockRUnlock() { s.blockMu.RUnlock() }
-
-// BlockLock acquires the exclusive block-execution write lock. This must be
-// held during the entire Snapshot → ExecuteTx → ComputeRoot → Commit cycle
-// so that RPC queries never observe partially-applied state.
-func (s *StateDB) BlockLock() { s.blockMu.Lock() }
-
-// BlockUnlock releases the exclusive block-execution write lock.
-func (s *StateDB) BlockUnlock() { s.blockMu.Unlock() }
-
-// ---- Snapshot / Rollback / Commit ----
+func (s *StateDB) BlockLock()    { s.blockMu.Lock() }
+func (s *StateDB) BlockUnlock()  { s.blockMu.Unlock() }
 
 func (s *StateDB) Snapshot() (int, error) {
 	s.mu.Lock()
@@ -462,6 +295,8 @@ func (s *StateDB) Snapshot() (int, error) {
 	return len(s.snapshots) - 1, nil
 }
 
+// RevertToSnapshot undoes every write since snapshot id and drops id and all
+// later snapshots.
 func (s *StateDB) RevertToSnapshot(id int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -487,73 +322,42 @@ func (s *StateDB) RevertToSnapshot(id int) error {
 	return nil
 }
 
-// ComputeRoot returns the deterministic hash of the complete world state.
-// It merges all persisted state entries (scanned from DB by the known state
-// prefixes) with the current write buffer, then hashes the sorted key-value
-// pairs using length-prefix encoding.  It does NOT flush or modify state,
-// so it is safe to call before signing a block.
+// ComputeRoot hashes the whole world state including the write buffer, without
+// flushing it. Every key/value under the state prefixes, sorted by key, is
+// written as 4-byte big-endian length + bytes for both key and value.
 //
-// KNOWN LIMITATION (MEDIUM): This is O(N) over all state entries. For very
-// large states (millions of accounts/assets), this will become a bottleneck.
-// A Merkle-trie or incremental hashing structure would reduce this to O(log N)
-// per block, but is deferred until performance profiling warrants it.
+// It is O(N) in total state size; an incremental trie is deferred until
+// profiling demands it.
 func (s *StateDB) ComputeRoot() (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Step 1: collect all persisted state entries from DB.
-	merged := make(map[string][]byte)
-	for _, prefix := range statePrefixes {
-		it := s.db.NewIterator([]byte(prefix))
-		for it.Next() {
-			k := string(it.Key())
-			v := make([]byte, len(it.Value()))
-			copy(v, it.Value())
-			merged[k] = v
-		}
-		it.Release()
-		if err := it.Error(); err != nil {
-			// A failed iteration means the root would be computed from
-			// partial state — callers must abort block production/acceptance.
-			return "", fmt.Errorf("iterator error in ComputeRoot (prefix %q): %w", prefix, err)
-		}
+	merged, err := s.visibleEntries(statePrefixes...)
+	if err != nil {
+		return "", err
 	}
-
-	// Step 2: apply in-memory write buffer (uncommitted changes this block).
-	for k, v := range s.dirty {
-		merged[k] = v
-	}
-
-	// Step 3: exclude deleted keys.
-	for k := range s.deleted {
-		delete(merged, k)
-	}
-
-	// Step 4: sort keys for determinism.
 	keys := make([]string, 0, len(merged))
 	for k := range merged {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
-	// Step 5: length-prefix encode each key-value pair and hash.
 	var buf bytes.Buffer
-	var lenBuf [4]byte
 	for _, k := range keys {
-		v := merged[k]
-		kb := []byte(k)
-		binary.BigEndian.PutUint32(lenBuf[:], uint32(len(kb)))
-		buf.Write(lenBuf[:])
-		buf.Write(kb)
-		binary.BigEndian.PutUint32(lenBuf[:], uint32(len(v)))
-		buf.Write(lenBuf[:])
-		buf.Write(v)
+		writeLengthPrefixed(&buf, []byte(k))
+		writeLengthPrefixed(&buf, merged[k])
 	}
 	return crypto.Hash(buf.Bytes()), nil
 }
 
-// Commit atomically flushes the write buffer to the underlying DB via a
-// WriteBatch and then clears it. Call ComputeRoot() before signing the block,
-// then call Commit() after the block is safely stored.
+func writeLengthPrefixed(buf *bytes.Buffer, b []byte) {
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(b)))
+	buf.Write(lenBuf[:])
+	buf.Write(b)
+}
+
+// Commit writes the buffer to the DB in one atomic batch and clears it,
+// including all snapshots.
 func (s *StateDB) Commit() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
