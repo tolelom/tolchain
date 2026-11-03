@@ -97,6 +97,7 @@ wallet/             # 키 생성, AES-GCM 키스토어, 트랜잭션 빌더
 - 최대 50 피어, 메시지 크기 제한 10MB
 - 선택적 mTLS (CA cert, node cert, node key)
 - 블록 싱크: 피어와 온디맨드 동기화
+- tx 전달: RPC로 받은 tx와 피어에게 처음 받은 tx를 보낸 피어를 뺀 나머지에 보냄
 
 ### RPC API
 
