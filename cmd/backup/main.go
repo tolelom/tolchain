@@ -1,6 +1,5 @@
-// Command backup exports the current TOL Chain state from LevelDB to a JSON file.
-// The database is opened in read-only mode so it can be run while the node is stopped
-// (or against a snapshot copy) without risk of corruption.
+// Command backup exports world state from a stopped node's LevelDB (or a copy
+// of it) to JSON. The database is opened read-only.
 //
 // Usage:
 //
@@ -20,13 +19,11 @@ import (
 	"github.com/tolelom/tolchain/storage"
 )
 
-// stateEntry is a single key-value pair in the exported state.
 type stateEntry struct {
 	Key   string          `json:"key"`
 	Value json.RawMessage `json:"value"`
 }
 
-// backup is the top-level export format.
 type backup struct {
 	BlockHeight int64        `json:"block_height"`
 	BlockHash   string       `json:"block_hash"`
@@ -46,16 +43,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	b := backup{}
 
-	// Read chain tip.
 	if tipVal, err := db.Get([]byte(storage.ChainTipKey), nil); err == nil {
 		b.ChainTip = string(tipVal)
 	}
 
-	// If we have a tip, read the tip block to get height.
 	if b.ChainTip != "" {
 		if blockData, err := db.Get([]byte(storage.BlockKeyPrefix+b.ChainTip), nil); err == nil {
 			var block struct {
@@ -71,7 +66,6 @@ func main() {
 		}
 	}
 
-	// Export all state entries.
 	for _, prefix := range storage.StatePrefixes() {
 		iter := db.NewIterator(util.BytesPrefix([]byte(prefix)), nil)
 		for iter.Next() {
@@ -79,7 +73,6 @@ func main() {
 			val := make([]byte, len(iter.Value()))
 			copy(val, iter.Value())
 
-			// Try to parse as JSON for clean output; fall back to hex.
 			var entry stateEntry
 			entry.Key = key
 			if json.Valid(val) {
@@ -96,7 +89,6 @@ func main() {
 		}
 	}
 
-	// Count blocks and index entries.
 	countPrefix := func(prefix string) int {
 		count := 0
 		iter := db.NewIterator(util.BytesPrefix([]byte(prefix)), nil)
@@ -108,7 +100,6 @@ func main() {
 	}
 
 	b.Blocks = countPrefix(storage.BlockKeyPrefix)
-	// Count index entries (the indexer writes under "idx:").
 	b.Indexes = countPrefix("idx:")
 
 	data, err := json.MarshalIndent(b, "", "  ")
@@ -117,8 +108,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 0600: backup includes account balances, session records, and other
-	// per-user state — read access is restricted to the running user.
+	// 0600: the export holds every account's state.
 	if err := os.WriteFile(*output, data, 0600); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to write output: %v\n", err)
 		os.Exit(1)
