@@ -14,13 +14,12 @@ import (
 )
 
 const (
-	// readHeaderTimeout limits how long the server waits for request headers.
 	readHeaderTimeout = 10 * time.Second
-	// shutdownTimeout is the grace period for in-flight requests during shutdown.
-	shutdownTimeout = 5 * time.Second
+	shutdownTimeout   = 5 * time.Second
 )
 
-// Server is a JSON-RPC 2.0 HTTP server.
+// Server serves JSON-RPC 2.0 on "/", plus /status, /metrics and optionally
+// the SSE stream on /events.
 type Server struct {
 	handler     *Handler
 	addr        string
@@ -30,18 +29,13 @@ type Server struct {
 	ln          net.Listener
 	limiter     *ipLimiter
 	maxBodySize int64
-	trustedNets []*net.IPNet // peers whose X-Forwarded-For is trusted; empty → RemoteAddr only
+	trustedNets []*net.IPNet
 }
 
-// NewServer creates a Server on addr. If authToken is non-empty, every
-// request must carry a matching "Authorization: Bearer <token>" header.
-// If sseBroker is non-nil, an SSE endpoint is registered at /events.
-// If statusFunc is non-nil, a GET /status endpoint returns its result as JSON.
-// rateLimit, rateBurst, readTimeoutSec, writeTimeoutSec, idleTimeoutSec, maxBodySize
-// control server behavior.
-// trustedProxies is a list of IPs/CIDRs (config rpc.trusted_proxies): requests
-// arriving from these peers use the last X-Forwarded-For hop as the rate-limit
-// identity. Empty (the default) keeps the RemoteAddr-only behavior.
+// NewServer builds the server. A non-empty authToken requires
+// "Authorization: Bearer <token>" on RPC, /metrics and /events; /status stays
+// open. trustedProxies (IPs/CIDRs) are peers whose last X-Forwarded-For hop is
+// used as the rate-limit identity.
 func NewServer(addr string, handler *Handler, authToken string, sseBroker *SSEBroker, statusFunc func() any, rateLimitVal float64, rateBurstVal int, readTimeoutSec, writeTimeoutSec, idleTimeoutSec int, maxBodySize int64, trustedProxies []string) *Server {
 	s := &Server{
 		handler:     handler,
@@ -75,8 +69,8 @@ func NewServer(addr string, handler *Handler, authToken string, sseBroker *SSEBr
 	return s
 }
 
-// Start binds the port synchronously (so callers know immediately if binding
-// fails) then serves requests in a background goroutine.
+// Start binds synchronously so a bind error is returned, then serves in the
+// background.
 func (s *Server) Start() error {
 	ln, err := net.Listen("tcp", s.addr)
 	if err != nil {
@@ -91,7 +85,7 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Addr returns the listener's address. Useful when started on ":0".
+// Addr returns the bound address, e.g. after starting on ":0".
 func (s *Server) Addr() net.Addr {
 	if s.ln != nil {
 		return s.ln.Addr()
@@ -99,8 +93,6 @@ func (s *Server) Addr() net.Addr {
 	return nil
 }
 
-// Stop gracefully shuts down the HTTP server, waiting up to 5 seconds for
-// in-flight requests to complete.
 func (s *Server) Stop() error {
 	s.limiter.stop()
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -108,16 +100,28 @@ func (s *Server) Stop() error {
 	return s.srv.Shutdown(ctx)
 }
 
-func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
-	// CORS headers for cross-origin requests.
+// setCORS allows any origin only while no auth token is configured; with a
+// token, browsers must go through a same-origin proxy.
+func (s *Server) setCORS(w http.ResponseWriter, methods string) {
 	if s.authToken == "" {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 	}
-	// When auth is required, do not allow wildcard CORS.
-	// Clients must use a reverse proxy or same-origin requests.
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", methods)
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+}
 
+// bearerAuthorized compares in constant time so the token cannot be guessed
+// byte by byte from response timing.
+func bearerAuthorized(r *http.Request, token string) bool {
+	if token == "" {
+		return true
+	}
+	got := r.Header.Get("Authorization")
+	return subtle.ConstantTimeCompare([]byte(got), []byte("Bearer "+token)) == 1
+}
+
+func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	s.setCORS(w, "GET, POST, OPTIONS")
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -130,7 +134,6 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if !s.limiter.allow(clientIP(r, s.trustedNets)) {
 		metrics.RPCRateLimited.Inc()
-		// Headers must be set before WriteHeader; afterwards they are ignored.
 		w.Header().Set("Retry-After", "1")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -138,19 +141,14 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.authToken != "" {
-		got := r.Header.Get("Authorization")
-		expected := "Bearer " + s.authToken
-		if subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
-			metrics.RPCErrors.WithLabelValues(fmt.Sprint(CodeUnauthorized)).Inc()
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			writeJSON(w, errResponse(nil, CodeUnauthorized, "unauthorized"))
-			return
-		}
+	if !bearerAuthorized(r, s.authToken) {
+		metrics.RPCErrors.WithLabelValues(fmt.Sprint(CodeUnauthorized)).Inc()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		writeJSON(w, errResponse(nil, CodeUnauthorized, "unauthorized"))
+		return
 	}
 
-	// Limit request body to prevent memory exhaustion.
 	r.Body = http.MaxBytesReader(w, r.Body, s.maxBodySize)
 
 	var req Request
@@ -169,7 +167,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	resp := s.handler.Dispatch(req)
 	method := req.Method
 	if resp.Error != nil && resp.Error.Code == CodeMethodNotFound {
-		method = "unknown"
+		method = "unknown" // bounds metric label cardinality
 	}
 	metrics.RPCRequests.WithLabelValues(method).Inc()
 	metrics.RPCDuration.WithLabelValues(method).Observe(time.Since(start).Seconds())
@@ -180,13 +178,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveStatus(w http.ResponseWriter, r *http.Request) {
-	// Apply same CORS policy as the main RPC handler.
-	if s.authToken == "" {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-	}
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
+	s.setCORS(w, "GET, OPTIONS")
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -204,13 +196,9 @@ func (s *Server) serveStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveMetrics(w http.ResponseWriter, r *http.Request) {
-	if s.authToken != "" {
-		got := r.Header.Get("Authorization")
-		expected := "Bearer " + s.authToken
-		if subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
+	if !bearerAuthorized(r, s.authToken) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
 	}
 	metrics.Handler().ServeHTTP(w, r)
 }
