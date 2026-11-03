@@ -9,7 +9,6 @@ import (
 	"github.com/tolelom/tolchain/crypto"
 )
 
-// DecodePayload unmarshals a handler's payload into T.
 func DecodePayload[T any](payload json.RawMessage, typ core.TxType) (*T, error) {
 	var p T
 	if err := json.Unmarshal(payload, &p); err != nil {

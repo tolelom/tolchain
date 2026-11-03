@@ -85,7 +85,6 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Addr returns the bound address, e.g. after starting on ":0".
 func (s *Server) Addr() net.Addr {
 	if s.ln != nil {
 		return s.ln.Addr()

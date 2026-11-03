@@ -8,7 +8,6 @@ import (
 	"github.com/tolelom/tolchain/indexer"
 )
 
-// Handler serves the JSON-RPC methods.
 type Handler struct {
 	bc      *core.Blockchain
 	mempool *core.Mempool
@@ -152,7 +151,6 @@ func (h *Handler) getBalance(req Request) Response {
 	})
 }
 
-// getByID serves the methods that read one state record by its "id" param.
 func (h *Handler) getByID(req Request, get func(id string) (any, error)) Response {
 	var params struct {
 		ID string `json:"id"`
