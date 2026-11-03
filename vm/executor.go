@@ -3,6 +3,7 @@ package vm
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -10,21 +11,8 @@ import (
 	"github.com/tolelom/tolchain/events"
 )
 
-// Context is passed to every Handler and provides access to the chain state,
-// the current block, the triggering transaction, and the event emitter.
-type Context struct {
-	State           core.State
-	Block           *core.Block
-	Tx              *core.Transaction
-	Emitter         events.EventEmitter
-	Operators       map[string]bool // operator pubkeys; nil or empty → no restrictions
-	MaxTotalSupply  uint64          // 0 → unlimited; >0 → hard cap on total minted tokens
-	EffectiveSender string          // tx.From if direct, tx.OnBehalfOf if delegated
-	// BlockHash returns the hash of an already committed block. nil if not configured.
-	BlockHash func(height int64) (string, error)
-}
-
-// Executor applies transactions to the state using the global Handler registry.
+// Executor applies transactions to the state through the global Handler
+// registry. Each tx runs under its own snapshot and is rolled back on failure.
 type Executor struct {
 	mu             sync.Mutex
 	state          core.State
@@ -34,34 +22,30 @@ type Executor struct {
 	blockHash      func(height int64) (string, error)
 }
 
-// NewExecutor creates an Executor with the given state and event emitter.
 func NewExecutor(state core.State, emitter events.EventEmitter) *Executor {
 	return &Executor{state: state, emitter: emitter}
 }
 
-// SetEmitter replaces the event emitter (e.g. with a Buffer during execution).
+// SetEmitter swaps the emitter, e.g. for a Buffer while a block executes.
 func (e *Executor) SetEmitter(em events.EventEmitter) {
 	e.mu.Lock()
 	e.emitter = em
 	e.mu.Unlock()
 }
 
-// SetMaxTotalSupply configures the hard cap on total minted tokens.
-// 0 means unlimited.
+// SetMaxTotalSupply caps tokens minted by rewards; 0 means unlimited.
 func (e *Executor) SetMaxTotalSupply(cap uint64) {
 	e.mu.Lock()
 	e.maxTotalSupply = cap
 	e.mu.Unlock()
 }
 
-// SetBlockHashes configures how handlers look up committed block hashes by height.
 func (e *Executor) SetBlockHashes(fn func(height int64) (string, error)) {
 	e.mu.Lock()
 	e.blockHash = fn
 	e.mu.Unlock()
 }
 
-// SetOperators configures the set of authorised operator public keys.
 func (e *Executor) SetOperators(ops []string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -76,10 +60,7 @@ func (e *Executor) SetOperators(ops []string) {
 	e.operators = m
 }
 
-// ExecuteBlock applies all transactions in block sequentially.
-// A failing transaction causes the whole block to be rejected.
-// EventBlockCommit is emitted by the caller (consensus) after signing so
-// the event carries the correct block hash.
+// ExecuteBlock applies a received block; any failing tx rejects the block.
 func (e *Executor) ExecuteBlock(block *core.Block) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -91,18 +72,15 @@ func (e *Executor) ExecuteBlock(block *core.Block) error {
 	return nil
 }
 
-// ExecuteTx verifies and executes a single transaction with snapshot/rollback.
 func (e *Executor) ExecuteTx(block *core.Block, tx *core.Transaction) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.executeTxLocked(block, tx)
 }
 
-// executeTxLocked is the internal implementation; caller must hold e.mu.
 func (e *Executor) executeTxLocked(block *core.Block, tx *core.Transaction) error {
-	// Tx ChainID는 서명에 포함되므로 cross-chain replay은 서명 검증으로 막히지만,
-	// 악성 validator가 서명이 유효한 외부 chain의 tx를 자기 블록에 끼워 넣는
-	// 시나리오는 별도. sync로 받은 블록 실행 시 마지막 방어선으로 명시 체크.
+	// The signature already binds the tx to its chain, but a malicious
+	// validator could still include a foreign chain's validly signed tx.
 	if tx.ChainID != block.Header.ChainID {
 		return fmt.Errorf("tx chain_id %q does not match block chain_id %q", tx.ChainID, block.Header.ChainID)
 	}
@@ -114,133 +92,48 @@ func (e *Executor) executeTxLocked(block *core.Block, tx *core.Transaction) erro
 	if err != nil {
 		return fmt.Errorf("snapshot: %w", err)
 	}
-
 	txEvents := events.NewBuffer()
 	if err := e.applyTx(block, tx, txEvents); err != nil {
 		if revertErr := e.state.RevertToSnapshot(snapID); revertErr != nil {
 			return fmt.Errorf("revert snapshot after tx failure: %w (revert: %v)", err, revertErr)
 		}
-		if e.emitter != nil {
-			e.emitter.Emit(events.Event{
-				Type:        events.EventTxExecuted,
-				TxID:        tx.ID,
-				BlockHeight: block.Header.Height,
-				Data:        events.TxExecutedData{Type: string(tx.Type), From: tx.From, Success: false, Error: err.Error()}.Map(),
-			})
-		}
+		e.emitTxExecuted(block, tx, err)
 		return err
 	}
-
 	if e.emitter != nil {
 		txEvents.Flush(e.emitter)
-		e.emitter.Emit(events.Event{
-			Type:        events.EventTxExecuted,
-			TxID:        tx.ID,
-			BlockHeight: block.Header.Height,
-			Data:        events.TxExecutedData{Type: string(tx.Type), From: tx.From, Success: true, Error: ""}.Map(),
-		})
 	}
+	e.emitTxExecuted(block, tx, nil)
 	return nil
 }
 
-// validateDelegation checks that tx.From is permitted to act on behalf of
-// tx.OnBehalfOf, then increments the grant's UsedCount.
-// Expiry is evaluated against the executing block's timestamp (not the wall
-// clock) so that every node — including ones replaying the block later —
-// reaches the same verdict.
-func (e *Executor) validateDelegation(block *core.Block, tx *core.Transaction) error {
-	if tx.Type == core.TxGrantDelegation || tx.Type == core.TxRevokeDelegation {
-		return fmt.Errorf("cannot execute %s via delegation", tx.Type)
+func (e *Executor) emitTxExecuted(block *core.Block, tx *core.Transaction, txErr error) {
+	if e.emitter == nil {
+		return
 	}
-	grant, err := e.state.GetDelegation(tx.OnBehalfOf, tx.From)
-	if err != nil {
-		return fmt.Errorf("grant not found: %w", err)
+	data := events.TxExecutedData{Type: string(tx.Type), From: tx.From, Success: txErr == nil}
+	if txErr != nil {
+		data.Error = txErr.Error()
 	}
-	// Block timestamps are UnixNano; ExpiresAt is in seconds.
-	blockTimeSec := block.Header.Timestamp / int64(time.Second)
-	if grant.ExpiresAt > 0 && blockTimeSec > grant.ExpiresAt {
-		return fmt.Errorf("delegation expired")
-	}
-	if grant.MaxUses > 0 && grant.UsedCount >= grant.MaxUses {
-		return fmt.Errorf("delegation max uses exceeded")
-	}
-	allowed := false
-	for _, t := range grant.AllowTypes {
-		if core.TxType(t) == tx.Type {
-			allowed = true
-			break
-		}
-	}
-	if !allowed {
-		return fmt.Errorf("tx type %s not allowed by delegation", tx.Type)
-	}
-	grant.UsedCount++
-	if err := e.state.SetDelegation(grant); err != nil {
-		return fmt.Errorf("update delegation grant: %w", err)
-	}
-	return nil
+	e.emitter.Emit(events.Event{
+		Type:        events.EventTxExecuted,
+		TxID:        tx.ID,
+		BlockHeight: block.Header.Height,
+		Data:        data.Map(),
+	})
 }
 
-// applyTx deducts the fee, increments the nonce, then dispatches to the handler.
 func (e *Executor) applyTx(block *core.Block, tx *core.Transaction, emitter events.EventEmitter) error {
 	effectiveSender := tx.From
 	if tx.OnBehalfOf != "" {
-		if err := e.validateDelegation(block, tx); err != nil {
+		if err := e.useDelegation(block, tx); err != nil {
 			return fmt.Errorf("delegation: %w", err)
 		}
 		effectiveSender = tx.OnBehalfOf
 	}
-
-	acc, err := e.state.GetAccount(effectiveSender)
-	if err != nil {
-		return fmt.Errorf("get account: %w", err)
+	if err := e.chargeFeeAndNonce(block, tx, effectiveSender); err != nil {
+		return err
 	}
-	if acc.Nonce != tx.Nonce {
-		return fmt.Errorf("invalid nonce: expected %d got %d: %w", acc.Nonce, tx.Nonce, core.ErrInvalidNonce)
-	}
-	if acc.Balance < tx.Fee {
-		return fmt.Errorf("insufficient balance for fee: have %d need %d: %w", acc.Balance, tx.Fee, core.ErrInsufficientBalance)
-	}
-	// The nonce overflow check fires when acc.Nonce == MaxUint64,
-	// even though the nonce equality check already passed.
-	// This means the account has exhausted all nonces.
-	if acc.Nonce == math.MaxUint64 {
-		return fmt.Errorf("nonce overflow for account %s: %w", effectiveSender, core.ErrNonceOverflow)
-	}
-	acc.Balance -= tx.Fee
-	acc.Nonce++
-
-	// (D) Credit fee to block proposer instead of burning it.
-	// When sender IS the proposer, both adjustments must be applied to the
-	// same in-memory struct to avoid a later SetAccount overwriting the first.
-	if tx.Fee > 0 && block.Header.Proposer != "" && effectiveSender != block.Header.Proposer {
-		// Different accounts: save sender, then load & credit proposer.
-		if err := e.state.SetAccount(acc); err != nil {
-			return err
-		}
-		proposer, err := e.state.GetAccount(block.Header.Proposer)
-		if err != nil {
-			return fmt.Errorf("get proposer account: %w", err)
-		}
-		newBal, err := SafeAdd(proposer.Balance, tx.Fee)
-		if err != nil {
-			return fmt.Errorf("proposer balance overflow: %w", core.ErrBalanceOverflow)
-		}
-		proposer.Balance = newBal
-		if err := e.state.SetAccount(proposer); err != nil {
-			return fmt.Errorf("set proposer account: %w", err)
-		}
-	} else {
-		// Same account (or fee==0): fee deduction and credit cancel out on
-		// the same struct, so just save the nonce increment.
-		if tx.Fee > 0 && effectiveSender == block.Header.Proposer {
-			acc.Balance += tx.Fee
-		}
-		if err := e.state.SetAccount(acc); err != nil {
-			return err
-		}
-	}
-
 	ctx := &Context{
 		State:           e.state,
 		Block:           block,
@@ -254,6 +147,84 @@ func (e *Executor) applyTx(block *core.Block, tx *core.Transaction, emitter even
 	return runHandler(tx, ctx)
 }
 
+// useDelegation checks that tx.From may act for tx.OnBehalfOf and counts one
+// use of the grant. Expiry is judged by the block timestamp, not the wall
+// clock, so replaying nodes reach the same verdict.
+func (e *Executor) useDelegation(block *core.Block, tx *core.Transaction) error {
+	if tx.Type == core.TxGrantDelegation || tx.Type == core.TxRevokeDelegation {
+		return fmt.Errorf("cannot execute %s via delegation", tx.Type)
+	}
+	grant, err := e.state.GetDelegation(tx.OnBehalfOf, tx.From)
+	if err != nil {
+		return fmt.Errorf("grant not found: %w", err)
+	}
+	blockTimeSec := block.Header.Timestamp / int64(time.Second)
+	if grant.ExpiresAt > 0 && blockTimeSec > grant.ExpiresAt {
+		return fmt.Errorf("delegation expired")
+	}
+	if grant.MaxUses > 0 && grant.UsedCount >= grant.MaxUses {
+		return fmt.Errorf("delegation max uses exceeded")
+	}
+	if !slices.ContainsFunc(grant.AllowTypes, func(t string) bool { return core.TxType(t) == tx.Type }) {
+		return fmt.Errorf("tx type %s not allowed by delegation", tx.Type)
+	}
+	grant.UsedCount++
+	if err := e.state.SetDelegation(grant); err != nil {
+		return fmt.Errorf("update delegation grant: %w", err)
+	}
+	return nil
+}
+
+// chargeFeeAndNonce consumes the sender's nonce and pays the fee to the block
+// proposer. Without a proposer the fee is burned.
+func (e *Executor) chargeFeeAndNonce(block *core.Block, tx *core.Transaction, sender string) error {
+	acc, err := e.state.GetAccount(sender)
+	if err != nil {
+		return fmt.Errorf("get account: %w", err)
+	}
+	if acc.Nonce != tx.Nonce {
+		return fmt.Errorf("invalid nonce: expected %d got %d: %w", acc.Nonce, tx.Nonce, core.ErrInvalidNonce)
+	}
+	if acc.Balance < tx.Fee {
+		return fmt.Errorf("insufficient balance for fee: have %d need %d: %w", acc.Balance, tx.Fee, core.ErrInsufficientBalance)
+	}
+	if acc.Nonce == math.MaxUint64 {
+		return fmt.Errorf("nonce overflow for account %s: %w", sender, core.ErrNonceOverflow)
+	}
+	acc.Balance -= tx.Fee
+	acc.Nonce++
+
+	proposer := block.Header.Proposer
+	switch {
+	case tx.Fee == 0 || proposer == "":
+		return e.state.SetAccount(acc)
+	case sender == proposer:
+		// Same account: settle on this struct, or a second load-and-save
+		// would overwrite the nonce increment.
+		acc.Balance += tx.Fee
+		return e.state.SetAccount(acc)
+	}
+
+	if err := e.state.SetAccount(acc); err != nil {
+		return err
+	}
+	proposerAcc, err := e.state.GetAccount(proposer)
+	if err != nil {
+		return fmt.Errorf("get proposer account: %w", err)
+	}
+	newBal, err := SafeAdd(proposerAcc.Balance, tx.Fee)
+	if err != nil {
+		return fmt.Errorf("proposer balance overflow: %w", core.ErrBalanceOverflow)
+	}
+	proposerAcc.Balance = newBal
+	if err := e.state.SetAccount(proposerAcc); err != nil {
+		return fmt.Errorf("set proposer account: %w", err)
+	}
+	return nil
+}
+
+// runHandler turns a handler panic into a tx failure so the snapshot is still
+// reverted and the executor lock released.
 func runHandler(tx *core.Transaction, ctx *Context) (err error) {
 	defer func() {
 		if r := recover(); r != nil {

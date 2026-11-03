@@ -10,9 +10,9 @@ import (
 )
 
 func handleTransfer(ctx *vm.Context, payload json.RawMessage) error {
-	var p core.TransferPayload
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return fmt.Errorf("decode transfer payload: %w", err)
+	p, err := vm.DecodePayload[core.TransferPayload](payload, core.TxTransfer)
+	if err != nil {
+		return err
 	}
 	if p.Amount == 0 {
 		return fmt.Errorf("transfer amount must be > 0")
@@ -20,16 +20,11 @@ func handleTransfer(ctx *vm.Context, payload json.RawMessage) error {
 	if err := vm.ValidatePubKey(p.To, "to address"); err != nil {
 		return err
 	}
-
-	// Enforce delegation MaxAmount before debiting. No-op for direct tx
-	// (OnBehalfOf == "") and for grants with MaxAmount == 0 (unlimited).
 	if err := vm.ChargeDelegationAmount(ctx, p.Amount); err != nil {
 		return err
 	}
 
-	// The sender account is loaded again here because applyTx already saved it
-	// with the fee deduction and nonce increment. We need the updated state.
-	// This is intentionally a second read from the dirty buffer (O(1) in-memory).
+	// Reloaded: the executor already saved the fee and nonce change.
 	sender, err := ctx.State.GetAccount(ctx.EffectiveSender)
 	if err != nil {
 		return err
@@ -55,17 +50,6 @@ func handleTransfer(ctx *vm.Context, payload json.RawMessage) error {
 		return err
 	}
 
-	if ctx.Emitter != nil {
-		ctx.Emitter.Emit(events.Event{
-			Type:        events.EventTokenTransfer,
-			TxID:        ctx.Tx.ID,
-			BlockHeight: ctx.Block.Header.Height,
-			Data: events.TokenTransferData{
-				From:   ctx.EffectiveSender,
-				To:     p.To,
-				Amount: p.Amount,
-			}.Map(),
-		})
-	}
+	ctx.Emit(events.EventTokenTransfer, events.TokenTransferData{From: ctx.EffectiveSender, To: p.To, Amount: p.Amount})
 	return nil
 }

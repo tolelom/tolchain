@@ -12,104 +12,91 @@ import (
 	"github.com/tolelom/tolchain/vm/modules/asset"
 )
 
-// NOTE: Asset properties are validated against the template schema via
-// asset.ValidateSchema. Max asset count is capped at 50. The operator
-// signature requirement provides additional access control.
+const maxRewardAssets = 50
+
 func handleGrantReward(ctx *vm.Context, payload json.RawMessage) error {
 	if err := vm.RequireOperator(ctx); err != nil {
 		return err
 	}
-
-	var p core.GrantRewardPayload
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return fmt.Errorf("decode grant_reward payload: %w", err)
+	p, err := vm.DecodePayload[core.GrantRewardPayload](payload, core.TxGrantReward)
+	if err != nil {
+		return err
 	}
 	if err := vm.ValidatePubKey(p.Recipient, "recipient"); err != nil {
 		return err
 	}
-
-	const maxRewardAssets = 50
 	if len(p.Assets) > maxRewardAssets {
 		return fmt.Errorf("too many assets in reward: max %d, got %d", maxRewardAssets, len(p.Assets))
 	}
 
-	// Credit tokens.
 	if p.TokenAmount > 0 {
-		// Enforce delegation MaxAmount on the granter for reward tokens.
 		if err := vm.ChargeDelegationAmount(ctx, p.TokenAmount); err != nil {
 			return err
 		}
-		// Enforce total supply cap if configured.
-		if ctx.MaxTotalSupply > 0 {
-			supply, err := ctx.State.GetAccount("system:total_supply")
-			if err != nil {
-				return fmt.Errorf("get total supply: %w", err)
-			}
-			// Overflow-safe cap check: reject if the amount alone exceeds the
-			// cap (would underflow the subtraction below) or if the remaining
-			// headroom is too small. Never computes supply.Balance+p.TokenAmount,
-			// which could wrap around uint64.
-			if p.TokenAmount > ctx.MaxTotalSupply || supply.Balance > ctx.MaxTotalSupply-p.TokenAmount {
-				return errors.New("total supply cap exceeded")
-			}
-			supply.Balance += p.TokenAmount
-			if err := ctx.State.SetAccount(supply); err != nil {
-				return fmt.Errorf("update total supply: %w", err)
-			}
+		if err := mintTokens(ctx, p.Recipient, p.TokenAmount); err != nil {
+			return err
 		}
-
-		acc, err := ctx.State.GetAccount(p.Recipient)
-		if err != nil {
-			return fmt.Errorf("get recipient account: %w", err)
-		}
-		newBal, err := vm.SafeAdd(acc.Balance, p.TokenAmount)
-		if err != nil {
-			return fmt.Errorf("recipient balance overflow")
-		}
-		acc.Balance = newBal
-		if err := ctx.State.SetAccount(acc); err != nil {
+	}
+	for i, mint := range p.Assets {
+		if err := mintRewardAsset(ctx, p.Recipient, i, mint); err != nil {
 			return err
 		}
 	}
 
-	// Mint each asset.
-	for i, mintP := range p.Assets {
-		tmpl, err := ctx.State.GetTemplate(mintP.TemplateID)
+	ctx.Emit(events.EventRewardGranted, events.RewardGrantedData{Recipient: p.Recipient, TokenAmount: p.TokenAmount, AssetCount: len(p.Assets)})
+	return nil
+}
+
+// mintTokens creates new tokens for recipient. The supply counter is only
+// maintained while a cap is configured.
+func mintTokens(ctx *vm.Context, recipient string, amount uint64) error {
+	if ctx.MaxTotalSupply > 0 {
+		supply, err := ctx.State.GetAccount(core.TotalSupplyAddress)
 		if err != nil {
-			return fmt.Errorf("asset[%d] template %q not found: %w", i, mintP.TemplateID, err)
+			return fmt.Errorf("get total supply: %w", err)
 		}
-		if err := asset.ValidateSchema(tmpl.Schema, mintP.Properties); err != nil {
-			return fmt.Errorf("reward asset %s: schema validation failed: %w", mintP.TemplateID, err)
+		// Written as a subtraction so supply+amount can never wrap.
+		if amount > ctx.MaxTotalSupply || supply.Balance > ctx.MaxTotalSupply-amount {
+			return errors.New("total supply cap exceeded")
 		}
-		assetID := crypto.Hash([]byte(fmt.Sprintf("%s:reward:%d", ctx.Tx.ID, i)))
-		asset := &core.Asset{
-			ID:         assetID,
-			TemplateID: mintP.TemplateID,
-			Owner:      p.Recipient,
-			Properties: mintP.Properties,
-			Tradeable:  tmpl.Tradeable,
-			MintedAt:   ctx.Block.Header.Timestamp,
-		}
-		if err := ctx.State.SetAsset(asset); err != nil {
-			return fmt.Errorf("set asset[%d]: %w", i, err)
-		}
-		if ctx.Emitter != nil {
-			ctx.Emitter.Emit(events.Event{
-				Type:        events.EventAssetMinted,
-				TxID:        ctx.Tx.ID,
-				BlockHeight: ctx.Block.Header.Height,
-				Data:        events.AssetMintedData{AssetID: assetID, TemplateID: mintP.TemplateID, Owner: p.Recipient}.Map(),
-			})
+		supply.Balance += amount
+		if err := ctx.State.SetAccount(supply); err != nil {
+			return fmt.Errorf("update total supply: %w", err)
 		}
 	}
 
-	if ctx.Emitter != nil {
-		ctx.Emitter.Emit(events.Event{
-			Type:        events.EventRewardGranted,
-			TxID:        ctx.Tx.ID,
-			BlockHeight: ctx.Block.Header.Height,
-			Data:        events.RewardGrantedData{Recipient: p.Recipient, TokenAmount: p.TokenAmount, AssetCount: len(p.Assets)}.Map(),
-		})
+	acc, err := ctx.State.GetAccount(recipient)
+	if err != nil {
+		return fmt.Errorf("get recipient account: %w", err)
 	}
+	newBal, err := vm.SafeAdd(acc.Balance, amount)
+	if err != nil {
+		return fmt.Errorf("recipient balance overflow")
+	}
+	acc.Balance = newBal
+	return ctx.State.SetAccount(acc)
+}
+
+func mintRewardAsset(ctx *vm.Context, recipient string, i int, mint core.MintAssetPayload) error {
+	tmpl, err := ctx.State.GetTemplate(mint.TemplateID)
+	if err != nil {
+		return fmt.Errorf("asset[%d] template %q not found: %w", i, mint.TemplateID, err)
+	}
+	if err := asset.ValidateSchema(tmpl.Schema, mint.Properties); err != nil {
+		return fmt.Errorf("reward asset %s: schema validation failed: %w", mint.TemplateID, err)
+	}
+	assetID := crypto.Hash([]byte(fmt.Sprintf("%s:reward:%d", ctx.Tx.ID, i)))
+	a := &core.Asset{
+		ID:         assetID,
+		TemplateID: mint.TemplateID,
+		Owner:      recipient,
+		Properties: mint.Properties,
+		Tradeable:  tmpl.Tradeable,
+		MintedAt:   ctx.Block.Header.Timestamp,
+	}
+	if err := ctx.State.SetAsset(a); err != nil {
+		return fmt.Errorf("set asset[%d]: %w", i, err)
+	}
+	ctx.Emit(events.EventAssetMinted, events.AssetMintedData{AssetID: assetID, TemplateID: mint.TemplateID, Owner: recipient})
 	return nil
 }

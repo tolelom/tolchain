@@ -45,7 +45,7 @@ func CreateGenesisBlock(cfg *Config, state core.State) (*core.Block, error) {
 	// Initialize the total supply tracker so the cap check is accurate.
 	if totalAlloc > 0 || cfg.MaxTotalSupply > 0 {
 		supply := &core.Account{
-			Address: "system:total_supply",
+			Address: core.TotalSupplyAddress,
 			Balance: totalAlloc,
 			Nonce:   0,
 		}
