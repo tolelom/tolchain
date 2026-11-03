@@ -237,9 +237,9 @@ func (s *StateDB) delegations(prefix string, keep func(*core.DelegationGrant) bo
 		return nil, err
 	}
 	grants := make([]*core.DelegationGrant, 0, len(entries))
-	for _, v := range entries {
+	for _, k := range sortedKeys(entries) {
 		var g core.DelegationGrant
-		if err := json.Unmarshal(v, &g); err != nil {
+		if err := json.Unmarshal(entries[k], &g); err != nil {
 			continue
 		}
 		if keep(&g) {
@@ -272,6 +272,15 @@ func (s *StateDB) visibleEntries(prefixes ...string) (map[string][]byte, error) 
 		delete(merged, k)
 	}
 	return merged, nil
+}
+
+func sortedKeys(m map[string][]byte) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func hasAnyPrefix(key string, prefixes []string) bool {
@@ -335,14 +344,8 @@ func (s *StateDB) ComputeRoot() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	keys := make([]string, 0, len(merged))
-	for k := range merged {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
 	var buf bytes.Buffer
-	for _, k := range keys {
+	for _, k := range sortedKeys(merged) {
 		writeLengthPrefixed(&buf, []byte(k))
 		writeLengthPrefixed(&buf, merged[k])
 	}
