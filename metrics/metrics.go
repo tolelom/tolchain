@@ -1,4 +1,5 @@
-// Package metrics defines Prometheus metrics for all tolchain subsystems.
+// Package metrics holds the node's Prometheus metrics. Names are what
+// dashboards and alerts query; keep them stable.
 package metrics
 
 import (
@@ -10,7 +11,6 @@ import (
 
 const ns = "tolchain"
 
-// Consensus metrics.
 var (
 	BlocksProduced = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: ns, Name: "blocks_produced_total",
@@ -36,7 +36,6 @@ var (
 	})
 )
 
-// Mempool metrics.
 var (
 	MempoolSize = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: ns, Name: "mempool_size",
@@ -56,7 +55,6 @@ var (
 	}, []string{"reason"})
 )
 
-// Network metrics.
 var (
 	PeersConnected = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: ns, Name: "peers_connected",
@@ -68,7 +66,6 @@ var (
 	}, []string{"type"})
 )
 
-// RPC metrics.
 var (
 	RPCRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: ns, Name: "rpc_requests_total",
@@ -91,18 +88,13 @@ var (
 
 func init() {
 	prometheus.MustRegister(
-		// consensus
 		BlocksProduced, BlockHeight, BlockProductionDuration, BlockTxCount, TxFailed,
-		// mempool
 		MempoolSize, MempoolAdded, MempoolRemoved, MempoolRejected,
-		// network
 		PeersConnected, P2PMessagesReceived,
-		// rpc
 		RPCRequests, RPCDuration, RPCErrors, RPCRateLimited,
 	)
 }
 
-// Handler returns an http.Handler that serves Prometheus metrics.
 func Handler() http.Handler {
 	return promhttp.Handler()
 }

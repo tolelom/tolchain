@@ -1,9 +1,9 @@
-// Package rpc exposes blockchain state via a JSON-RPC 2.0 HTTP endpoint.
+// Package rpc serves JSON-RPC 2.0 over HTTP, plus status, metrics and an SSE
+// event stream.
 package rpc
 
 import "encoding/json"
 
-// Request is a JSON-RPC 2.0 request envelope.
 type Request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      any             `json:"id"`
@@ -11,7 +11,6 @@ type Request struct {
 	Params  json.RawMessage `json:"params"`
 }
 
-// Response is a JSON-RPC 2.0 response envelope.
 type Response struct {
 	JSONRPC string `json:"jsonrpc"`
 	ID      any    `json:"id"`
@@ -19,13 +18,12 @@ type Response struct {
 	Error   *Error `json:"error,omitempty"`
 }
 
-// Error represents a JSON-RPC error object.
 type Error struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
 
-// Standard JSON-RPC error codes.
+// Standard JSON-RPC codes, then this server's own (-32000 and below).
 const (
 	CodeParseError     = -32700
 	CodeInvalidRequest = -32600
@@ -33,6 +31,7 @@ const (
 	CodeInvalidParams  = -32602
 	CodeInternalError  = -32603
 	CodeUnauthorized   = -32000
+	CodeRateLimited    = -32001
 )
 
 func errResponse(id any, code int, msg string) Response {
