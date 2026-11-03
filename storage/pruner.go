@@ -1,85 +1,70 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
+
+	"github.com/tolelom/tolchain/core"
 )
 
 const (
 	metaPrunedHeight = "metadata:pruned_height"
+	pruneBatchSize   = 1000
 )
 
-// Pruner removes old blocks and their height index entries
-// to limit disk usage on long-running nodes. It preserves the
-// genesis block (height 0) and the most recent keepBlocks blocks.
+// Pruner deletes old blocks and their height index, always keeping genesis
+// and the latest keepBlocks blocks.
 type Pruner struct {
 	db         DB
 	keepBlocks int64
 }
 
-// NewPruner creates a pruner. keepBlocks is the number of recent
-// blocks to retain. If keepBlocks <= 0, Prune() is a no-op.
+// NewPruner returns a pruner; keepBlocks <= 0 disables pruning.
 func NewPruner(db DB, keepBlocks int64) *Pruner {
 	return &Pruner{db: db, keepBlocks: keepBlocks}
 }
 
-// Prune deletes blocks below currentHeight - keepBlocks.
-// It skips the genesis block (height 0) and is idempotent.
+// Prune deletes blocks below currentHeight-keepBlocks, resuming after the last
+// pruned height.
 //
-// NOTE: Transaction index entries (idx:tx:*) for pruned blocks are not
-// cleaned up here because deserializing each block to extract tx IDs
-// would negate the performance benefit of pruning. These orphan index
-// entries are harmless and will be cleaned up during a full reindex.
+// Tx index entries (idx:tx:*) of pruned blocks are left in place: removing
+// them would mean decoding every pruned block.
 func (p *Pruner) Prune(currentHeight int64) error {
 	if p.keepBlocks <= 0 || currentHeight <= p.keepBlocks {
 		return nil
 	}
-
 	pruneBelow := currentHeight - p.keepBlocks
-
-	// Resume from last pruned height to avoid re-scanning.
-	startHeight := p.lastPrunedHeight() + 1
-
-	// Genesis block (height 0) is never pruned.
-	if startHeight < 1 {
-		startHeight = 1
-	}
+	startHeight := max(p.lastPrunedHeight()+1, 1)
 	if startHeight >= pruneBelow {
 		return nil
 	}
 
 	batch := p.db.NewBatch()
 	pruned := 0
-
 	for h := startHeight; h < pruneBelow; h++ {
-		heightKey := fmt.Sprintf("height:%d", h)
-
-		hash, err := p.db.Get([]byte(heightKey))
-		if err != nil {
-			// Already pruned or missing — skip.
+		hash, err := p.db.Get(heightKey(h))
+		if errors.Is(err, core.ErrNotFound) {
 			continue
 		}
-
-		batch.Delete([]byte("block:" + string(hash)))
-		batch.Delete([]byte(heightKey))
+		if err != nil {
+			return fmt.Errorf("prune: read height %d: %w", h, err)
+		}
+		batch.Delete(blockKey(string(hash)))
+		batch.Delete(heightKey(h))
 		pruned++
-
-		// Flush in chunks to avoid large batch memory.
-		if pruned%1000 == 0 {
-			batch.Set([]byte(metaPrunedHeight), []byte(strconv.FormatInt(h, 10)))
-			if err := batch.Write(); err != nil {
-				return fmt.Errorf("prune batch write: %w", err)
+		if pruned%pruneBatchSize == 0 {
+			if err := writePruneBatch(batch, h); err != nil {
+				return err
 			}
 			batch.Reset()
 		}
 	}
-
-	if pruned%1000 != 0 {
-		batch.Set([]byte(metaPrunedHeight), []byte(strconv.FormatInt(pruneBelow-1, 10)))
-		if err := batch.Write(); err != nil {
-			return fmt.Errorf("prune batch write: %w", err)
+	if pruned%pruneBatchSize != 0 {
+		if err := writePruneBatch(batch, pruneBelow-1); err != nil {
+			return err
 		}
 	}
 
@@ -90,11 +75,18 @@ func (p *Pruner) Prune(currentHeight int64) error {
 			"current_height", currentHeight,
 		)
 	}
-
 	return nil
 }
 
-// lastPrunedHeight returns the last pruned height, or 0 if never pruned.
+func writePruneBatch(batch Batch, prunedUpTo int64) error {
+	batch.Set([]byte(metaPrunedHeight), []byte(strconv.FormatInt(prunedUpTo, 10)))
+	if err := batch.Write(); err != nil {
+		return fmt.Errorf("prune batch write: %w", err)
+	}
+	return nil
+}
+
+// lastPrunedHeight returns 0 when nothing was pruned yet.
 func (p *Pruner) lastPrunedHeight() int64 {
 	val, err := p.db.Get([]byte(metaPrunedHeight))
 	if err != nil {

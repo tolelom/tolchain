@@ -36,10 +36,6 @@ type backup struct {
 	Indexes     int          `json:"indexes_count"`
 }
 
-// statePrefixes are the key prefixes used by StateDB for world state.
-// Sourced from the storage package so new prefixes are never silently missed.
-var statePrefixes = storage.StatePrefixes()
-
 func main() {
 	dataDir := flag.String("data-dir", "./data/chain", "LevelDB data directory")
 	output := flag.String("output", "backup.json", "Output file path")
@@ -55,13 +51,13 @@ func main() {
 	b := backup{}
 
 	// Read chain tip.
-	if tipVal, err := db.Get([]byte("chain:tip"), nil); err == nil {
+	if tipVal, err := db.Get([]byte(storage.ChainTipKey), nil); err == nil {
 		b.ChainTip = string(tipVal)
 	}
 
 	// If we have a tip, read the tip block to get height.
 	if b.ChainTip != "" {
-		if blockData, err := db.Get([]byte("block:"+b.ChainTip), nil); err == nil {
+		if blockData, err := db.Get([]byte(storage.BlockKeyPrefix+b.ChainTip), nil); err == nil {
 			var block struct {
 				Hash   string `json:"hash"`
 				Header struct {
@@ -76,7 +72,7 @@ func main() {
 	}
 
 	// Export all state entries.
-	for _, prefix := range statePrefixes {
+	for _, prefix := range storage.StatePrefixes() {
 		iter := db.NewIterator(util.BytesPrefix([]byte(prefix)), nil)
 		for iter.Next() {
 			key := string(iter.Key())
@@ -111,7 +107,7 @@ func main() {
 		return count
 	}
 
-	b.Blocks = countPrefix("block:")
+	b.Blocks = countPrefix(storage.BlockKeyPrefix)
 	// Count index entries (the indexer writes under "idx:").
 	b.Indexes = countPrefix("idx:")
 
