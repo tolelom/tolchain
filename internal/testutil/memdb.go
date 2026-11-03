@@ -66,7 +66,6 @@ func (m *MemDB) NewBatch() storage.Batch {
 
 func (m *MemDB) Close() error { return nil }
 
-// memBatch is an in-memory atomic write buffer for MemDB.
 type memBatch struct {
 	db  *MemDB
 	ops []memBatchOp
@@ -123,7 +122,6 @@ type MemBlockStore struct {
 	tip    string
 }
 
-// NewMemBlockStore creates an empty MemBlockStore.
 func NewMemBlockStore() *MemBlockStore {
 	return &MemBlockStore{
 		blocks: make(map[string]*core.Block),
@@ -165,13 +163,12 @@ func (s *MemBlockStore) GetBlockByHeight(height int64) (*core.Block, error) {
 	return s.GetBlock(h)
 }
 
-// GetBlockRange returns up to limit blocks starting from fromHeight.
 func (s *MemBlockStore) GetBlockRange(fromHeight int64, limit int) ([]*core.Block, error) {
 	blocks := make([]*core.Block, 0, limit)
 	for h := fromHeight; h < fromHeight+int64(limit); h++ {
 		b, err := s.GetBlockByHeight(h)
 		if err != nil {
-			break // no more blocks at this height
+			break
 		}
 		blocks = append(blocks, b)
 	}

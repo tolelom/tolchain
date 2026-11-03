@@ -18,33 +18,25 @@ import (
 )
 
 const (
-	// certNotBeforeOffset shifts NotBefore into the past to tolerate clock skew.
-	certNotBeforeOffset = -1 * time.Hour
-	// caValidityDuration is the CA certificate lifetime (~10 years).
-	caValidityDuration = 10 * 365 * 24 * time.Hour
-	// nodeValidityDuration is the node certificate lifetime (~5 years).
+	// certNotBeforeOffset backdates certificates to tolerate clock skew.
+	certNotBeforeOffset  = -1 * time.Hour
+	caValidityDuration   = 10 * 365 * 24 * time.Hour
 	nodeValidityDuration = 5 * 365 * 24 * time.Hour
 )
 
-// Options configures additional Subject Alternative Names for the node cert.
+// Options adds Subject Alternative Names to the node certificate.
 type Options struct {
-	ExtraIPs []net.IP // additional IP SANs (e.g. external IP)
-	ExtraDNS []string // additional DNS SANs (e.g. hostname)
+	ExtraIPs []net.IP
+	ExtraDNS []string
 }
 
-// GenerateAll creates a CA certificate and a node certificate signed by that
-// CA, writing four PEM files into dir:
-//
-//	ca.crt, ca.key, <nodeID>.crt, <nodeID>.key
-//
-// All files are created with 0600 permissions.
-// Pass nil opts for localhost-only defaults.
+// GenerateAll writes ca.crt, ca.key, <nodeID>.crt and <nodeID>.key (0600)
+// into dir. The node certificate is valid for localhost, nodeID and opts.
 func GenerateAll(dir, nodeID string, opts *Options) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
 
-	// ---- CA key + cert ----
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return fmt.Errorf("generate CA key: %w", err)
@@ -87,7 +79,6 @@ func GenerateAll(dir, nodeID string, opts *Options) error {
 		return err
 	}
 
-	// ---- Node key + cert ----
 	nodeKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return fmt.Errorf("generate node key: %w", err)
@@ -148,7 +139,7 @@ func writePEM(path, typ string, data []byte) error {
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := pem.Encode(f, &pem.Block{Type: typ, Bytes: data}); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
