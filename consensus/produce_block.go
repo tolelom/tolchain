@@ -44,7 +44,7 @@ func (s *produceBlock) CheckProposer() error {
 func (s *produceBlock) SelectTxs() error {
 	limit := s.p.cfg.MaxBlockTxs
 	if limit <= 0 {
-		limit = defaultMaxBlockTxs
+		limit = config.DefaultMaxBlockTxs
 	}
 	s.candidates = s.p.mempool.Pending(limit)
 	return nil

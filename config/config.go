@@ -13,189 +13,139 @@ import (
 )
 
 const (
-	// DefaultRPCPort is the default JSON-RPC listen port.
-	DefaultRPCPort = 8545
-	// DefaultP2PPort is the default peer-to-peer listen port.
-	DefaultP2PPort = 30303
-	// DefaultMaxBlockTxs is the default maximum transactions per block.
-	DefaultMaxBlockTxs = 500
-	// MaxBlockTxsUpperBound is the hard cap for max_block_txs.
+	DefaultRPCPort        = 8545
+	DefaultP2PPort        = 30303
+	DefaultMaxBlockTxs    = 500
 	MaxBlockTxsUpperBound = 10000
-	// DefaultLogLevel is the default structured logging level.
-	DefaultLogLevel = "info"
+	DefaultLogLevel       = "info"
 	// MinPruneKeepBlocks is the smallest non-zero prune_keep_blocks. A random
-	// reveal reads the hash of a block up to RandomTargetDelay+RandomRevealWindow
-	// blocks back; pruning it would make the producer reject a valid reveal
-	// that non-pruning nodes accept.
+	// reveal reads a block hash up to this far back; if the producer had pruned
+	// it, it would reject reveals that other nodes accept and the chain forks.
 	MinPruneKeepBlocks = core.RandomTargetDelay + core.RandomRevealWindow
-	// DefaultPruneKeepBlocks is the default number of recent blocks to keep.
-	// 0 means no pruning (keep all blocks).
+	// DefaultPruneKeepBlocks of 0 keeps every block.
 	DefaultPruneKeepBlocks = 0
-	// DefaultGenesisTimestamp is the genesis block timestamp (Unix nanoseconds)
-	// used when genesis.timestamp is omitted: 2025-01-01T00:00:00Z. A fixed
-	// constant keeps the genesis hash deterministic across nodes even when the
-	// field is not set explicitly.
+	// DefaultGenesisTimestamp (2025-01-01T00:00:00Z in Unix ns) keeps the
+	// genesis hash identical across nodes that omit genesis.timestamp.
 	DefaultGenesisTimestamp int64 = 1735689600000000000
 )
 
-// MempoolConfig controls transaction pool behavior.
+// Zero-valued fields of the sections below are filled by ApplyDefaults.
+
 type MempoolConfig struct {
-	MaxSize      int `json:"max_size,omitempty"`       // max txs in pool; 0 → 10000
-	MaxTxAgeSec  int `json:"max_tx_age_sec,omitempty"` // max past timestamp drift in seconds; 0 → 3600
-	MaxFutureSec int `json:"max_future_sec,omitempty"` // max future timestamp drift in seconds; 0 → 300
+	MaxSize      int `json:"max_size,omitempty"`
+	MaxTxAgeSec  int `json:"max_tx_age_sec,omitempty"`
+	MaxFutureSec int `json:"max_future_sec,omitempty"`
 }
 
-// NetworkConfig controls P2P networking.
 type NetworkConfig struct {
-	MaxPeers         int `json:"max_peers,omitempty"`           // 0 → 50
-	WriteTimeoutSec  int `json:"write_timeout_sec,omitempty"`   // 0 → 30
-	ReadTimeoutSec   int `json:"read_timeout_sec,omitempty"`    // 0 → 300
-	MaxMessageSize   int `json:"max_message_size,omitempty"`    // bytes; 0 → 10485760 (10MB)
-	SyncBatchSize    int `json:"sync_batch_size,omitempty"`     // 0 → 50
-	MaxSyncBatchSize int `json:"max_sync_batch_size,omitempty"` // 0 → 200
+	MaxPeers         int `json:"max_peers,omitempty"`
+	WriteTimeoutSec  int `json:"write_timeout_sec,omitempty"`
+	ReadTimeoutSec   int `json:"read_timeout_sec,omitempty"`
+	MaxMessageSize   int `json:"max_message_size,omitempty"` // bytes
+	SyncBatchSize    int `json:"sync_batch_size,omitempty"`
+	MaxSyncBatchSize int `json:"max_sync_batch_size,omitempty"`
 }
 
-// RPCServerConfig controls JSON-RPC server behavior.
 type RPCServerConfig struct {
-	RateLimit       float64 `json:"rate_limit,omitempty"`        // requests/sec per IP; 0 → 100
-	RateBurst       int     `json:"rate_burst,omitempty"`        // burst size; 0 → 200
-	ReadTimeoutSec  int     `json:"read_timeout_sec,omitempty"`  // 0 → 30
-	WriteTimeoutSec int     `json:"write_timeout_sec,omitempty"` // 0 → 30
-	IdleTimeoutSec  int     `json:"idle_timeout_sec,omitempty"`  // 0 → 60
-	MaxBodySize     int64   `json:"max_body_size,omitempty"`     // bytes; 0 → 1048576 (1MB)
-	SSEBufferSize   int     `json:"sse_buffer_size,omitempty"`   // 0 → 64
-	// TrustedProxies lists peers (IPs/CIDRs) whose X-Forwarded-For header is
-	// trusted for rate-limit client identity. Only the LAST (rightmost) hop —
-	// the value the trusted proxy itself appended — is used; earlier hops are
-	// client-controlled. Empty (default) keeps RemoteAddr-only behavior,
-	// which is correct for directly exposed nodes. Opt in only when the node
-	// sits behind a reverse proxy you control.
+	RateLimit       float64 `json:"rate_limit,omitempty"` // requests/sec per client IP
+	RateBurst       int     `json:"rate_burst,omitempty"`
+	ReadTimeoutSec  int     `json:"read_timeout_sec,omitempty"`
+	WriteTimeoutSec int     `json:"write_timeout_sec,omitempty"`
+	IdleTimeoutSec  int     `json:"idle_timeout_sec,omitempty"`
+	MaxBodySize     int64   `json:"max_body_size,omitempty"` // bytes
+	SSEBufferSize   int     `json:"sse_buffer_size,omitempty"`
+	// TrustedProxies lists IPs/CIDRs whose X-Forwarded-For is believed for
+	// rate limiting. Only the rightmost hop is used: it is the one the proxy
+	// appended, everything left of it is client-controlled. Leave empty when
+	// the node is exposed directly.
 	TrustedProxies []string `json:"trusted_proxies,omitempty"`
 }
 
-// ConsensusConfig controls block production.
 type ConsensusConfig struct {
-	BlockIntervalSec int `json:"block_interval_sec,omitempty"` // 0 → 2
-	MaxTimeDriftSec  int `json:"max_time_drift_sec,omitempty"` // 0 → 15
+	BlockIntervalSec int `json:"block_interval_sec,omitempty"`
+	MaxTimeDriftSec  int `json:"max_time_drift_sec,omitempty"`
 }
 
-// TLSConfig holds paths to the PEM files needed for mTLS.
-// When nil or all paths empty, the node falls back to plain TCP.
+// TLSConfig holds PEM paths for P2P mTLS; all empty means plain TCP.
 type TLSConfig struct {
-	CACert   string `json:"ca_cert"`   // CA certificate PEM path
-	NodeCert string `json:"node_cert"` // node certificate PEM path
-	NodeKey  string `json:"node_key"`  // node private key PEM path
+	CACert   string `json:"ca_cert"`
+	NodeCert string `json:"node_cert"`
+	NodeKey  string `json:"node_key"`
 }
 
-// SeedPeer identifies a remote node to connect to on startup.
 type SeedPeer struct {
-	ID   string `json:"id"`   // remote node ID
+	ID   string `json:"id"`
 	Addr string `json:"addr"` // host:port
 }
 
-// GenesisConfig describes the chain's initial state.
-// All fields must be identical across nodes: the genesis block is derived
-// deterministically from this struct, so any difference (chain_id, timestamp,
-// alloc) produces a different genesis hash and an immediate fork.
+// GenesisConfig must be identical on every node: the genesis block is derived
+// from it, so any difference forks the chain at height 1.
 type GenesisConfig struct {
 	ChainID string            `json:"chain_id"`
 	Alloc   map[string]uint64 `json:"alloc"` // pubkey hex → initial balance
-	// Timestamp is the genesis block timestamp in Unix nanoseconds.
-	// It is part of the genesis hash, so every node bootstrapping from the
-	// same config builds a byte-identical genesis block. Omitted/0 → falls
-	// back to DefaultGenesisTimestamp. Must not be in the future: subsequent
-	// blocks must carry timestamps >= genesis, so a future value stalls
-	// block production until that time (rejected by Validate beyond 1h).
+	// Timestamp in Unix ns. It must not be in the future, because every later
+	// block must carry a timestamp at or after it.
 	Timestamp int64 `json:"timestamp,omitempty"`
 }
 
-// Config holds all node configuration.
 type Config struct {
-	NodeID          string          `json:"node_id"`
-	DataDir         string          `json:"data_dir"`
-	RPCPort         int             `json:"rpc_port"`
-	P2PPort         int             `json:"p2p_port"`
-	MaxBlockTxs     int             `json:"max_block_txs"`       // max transactions per block; 0 → 500
-	Validators      []string        `json:"validators"`          // authorised proposer pubkey hexes
-	Operators       []string        `json:"operators,omitempty"` // authorised game operator pubkey hexes (empty → no restriction)
-	Genesis         GenesisConfig   `json:"genesis"`
-	SeedPeers       []SeedPeer      `json:"seed_peers,omitempty"`        // initial peers to connect to
-	TLS             *TLSConfig      `json:"tls,omitempty"`               // nil → plain TCP
-	RPCAuthToken    string          `json:"rpc_auth_token,omitempty"`    // empty → no auth
-	LogLevel        string          `json:"log_level,omitempty"`         // "debug","info","warn","error"; default "info"
-	PruneKeepBlocks int64           `json:"prune_keep_blocks,omitempty"` // 0 → no pruning; >0 → keep only the latest N blocks
-	MaxTotalSupply  uint64          `json:"max_total_supply,omitempty"`  // 0 → unlimited; >0 → hard cap on total minted tokens
+	NodeID      string        `json:"node_id"`
+	DataDir     string        `json:"data_dir"`
+	RPCPort     int           `json:"rpc_port"`
+	P2PPort     int           `json:"p2p_port"`
+	MaxBlockTxs int           `json:"max_block_txs"`       // 0 → DefaultMaxBlockTxs
+	Validators  []string      `json:"validators"`          // proposer pubkeys, in round-robin order
+	Operators   []string      `json:"operators,omitempty"` // empty → every sender may run operator txs
+	Genesis     GenesisConfig `json:"genesis"`
+	SeedPeers   []SeedPeer    `json:"seed_peers,omitempty"`
+	TLS         *TLSConfig    `json:"tls,omitempty"`
+	// RPCAuthToken empty → RPC needs no auth.
+	RPCAuthToken    string          `json:"rpc_auth_token,omitempty"`
+	LogLevel        string          `json:"log_level,omitempty"`
+	PruneKeepBlocks int64           `json:"prune_keep_blocks,omitempty"`
+	MaxTotalSupply  uint64          `json:"max_total_supply,omitempty"` // 0 → unlimited
 	Mempool         MempoolConfig   `json:"mempool,omitempty"`
 	Network         NetworkConfig   `json:"network,omitempty"`
 	RPC             RPCServerConfig `json:"rpc,omitempty"`
 	Consensus       ConsensusConfig `json:"consensus,omitempty"`
 }
 
-// ApplyDefaults fills zero-valued fields with sensible defaults.
-func (c *Config) ApplyDefaults() {
-	if c.Mempool.MaxSize == 0 {
-		c.Mempool.MaxSize = 10000
-	}
-	if c.Mempool.MaxTxAgeSec == 0 {
-		c.Mempool.MaxTxAgeSec = 3600
-	}
-	if c.Mempool.MaxFutureSec == 0 {
-		c.Mempool.MaxFutureSec = 300
-	}
-	if c.Network.MaxPeers == 0 {
-		c.Network.MaxPeers = 50
-	}
-	if c.Network.WriteTimeoutSec == 0 {
-		c.Network.WriteTimeoutSec = 30
-	}
-	if c.Network.ReadTimeoutSec == 0 {
-		c.Network.ReadTimeoutSec = 300
-	}
-	if c.Network.MaxMessageSize == 0 {
-		c.Network.MaxMessageSize = 10 * 1024 * 1024
-	}
-	if c.Network.SyncBatchSize == 0 {
-		c.Network.SyncBatchSize = 50
-	}
-	if c.Network.MaxSyncBatchSize == 0 {
-		c.Network.MaxSyncBatchSize = 200
-	}
-	if c.RPC.RateLimit == 0 {
-		c.RPC.RateLimit = 100
-	}
-	if c.RPC.RateBurst == 0 {
-		c.RPC.RateBurst = 200
-	}
-	if c.RPC.ReadTimeoutSec == 0 {
-		c.RPC.ReadTimeoutSec = 30
-	}
-	if c.RPC.WriteTimeoutSec == 0 {
-		c.RPC.WriteTimeoutSec = 30
-	}
-	if c.RPC.IdleTimeoutSec == 0 {
-		c.RPC.IdleTimeoutSec = 60
-	}
-	if c.RPC.MaxBodySize == 0 {
-		c.RPC.MaxBodySize = 1024 * 1024
-	}
-	if c.RPC.SSEBufferSize == 0 {
-		c.RPC.SSEBufferSize = 64
-	}
-	if c.Consensus.BlockIntervalSec == 0 {
-		c.Consensus.BlockIntervalSec = 2
-	}
-	if c.Consensus.MaxTimeDriftSec == 0 {
-		c.Consensus.MaxTimeDriftSec = 15
-	}
-	if c.LogLevel == "" {
-		c.LogLevel = DefaultLogLevel
-	}
-	if c.Genesis.Timestamp == 0 {
-		c.Genesis.Timestamp = DefaultGenesisTimestamp
+func setDefault[T comparable](field *T, value T) {
+	var zero T
+	if *field == zero {
+		*field = value
 	}
 }
 
-// DefaultConfig returns a single-node development configuration.
+// ApplyDefaults fills zero-valued tunables.
+func (c *Config) ApplyDefaults() {
+	setDefault(&c.Mempool.MaxSize, 10000)
+	setDefault(&c.Mempool.MaxTxAgeSec, 3600)
+	setDefault(&c.Mempool.MaxFutureSec, 300)
+
+	setDefault(&c.Network.MaxPeers, 50)
+	setDefault(&c.Network.WriteTimeoutSec, 30)
+	setDefault(&c.Network.ReadTimeoutSec, 300)
+	setDefault(&c.Network.MaxMessageSize, 10*1024*1024)
+	setDefault(&c.Network.SyncBatchSize, 50)
+	setDefault(&c.Network.MaxSyncBatchSize, 200)
+
+	setDefault(&c.RPC.RateLimit, 100)
+	setDefault(&c.RPC.RateBurst, 200)
+	setDefault(&c.RPC.ReadTimeoutSec, 30)
+	setDefault(&c.RPC.WriteTimeoutSec, 30)
+	setDefault(&c.RPC.IdleTimeoutSec, 60)
+	setDefault(&c.RPC.MaxBodySize, 1024*1024)
+	setDefault(&c.RPC.SSEBufferSize, 64)
+
+	setDefault(&c.Consensus.BlockIntervalSec, 2)
+	setDefault(&c.Consensus.MaxTimeDriftSec, 15)
+
+	setDefault(&c.LogLevel, DefaultLogLevel)
+	setDefault(&c.Genesis.Timestamp, DefaultGenesisTimestamp)
+}
+
+// DefaultConfig is the single-node development configuration.
 func DefaultConfig() *Config {
 	cfg := &Config{
 		NodeID:          "node0",
@@ -214,7 +164,6 @@ func DefaultConfig() *Config {
 	return cfg
 }
 
-// Load reads a JSON config file from path and validates required fields.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -231,7 +180,7 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// Validate checks that all required fields are present and well-formed.
+// Validate rejects missing, malformed or contradictory settings.
 func (c *Config) Validate() error {
 	if c.NodeID == "" {
 		return fmt.Errorf("node_id must not be empty")
@@ -239,18 +188,39 @@ func (c *Config) Validate() error {
 	if c.DataDir == "" {
 		return fmt.Errorf("data_dir must not be empty")
 	}
+	for _, check := range []func() error{
+		c.validateGenesis,
+		c.validatePorts,
+		c.validateLimits,
+		c.validateNonNegative,
+		c.validateLogLevel,
+		c.validateKeys,
+		c.validateTrustedProxies,
+		c.validateTLS,
+	} {
+		if err := check(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Config) validateGenesis() error {
 	if c.Genesis.ChainID == "" {
 		return fmt.Errorf("genesis.chain_id must not be empty")
 	}
 	if c.Genesis.Timestamp < 0 {
 		return fmt.Errorf("genesis.timestamp must not be negative, got %d", c.Genesis.Timestamp)
 	}
-	// A genesis timestamp in the future stalls block production: every block
-	// must carry a timestamp >= its parent. Allow up to 1h drift (matches the
-	// consensus hard cap), reject anything beyond as a likely unit mistake.
+	// Same 1h bound as the consensus future-timestamp cap; beyond it the value
+	// is most likely in the wrong unit.
 	if maxTs := time.Now().Add(time.Hour).UnixNano(); c.Genesis.Timestamp > maxTs {
 		return fmt.Errorf("genesis.timestamp %d is more than 1h in the future (unix nanoseconds expected)", c.Genesis.Timestamp)
 	}
+	return nil
+}
+
+func (c *Config) validatePorts() error {
 	if c.RPCPort <= 0 || c.RPCPort > 65535 {
 		return fmt.Errorf("rpc_port must be 1-65535, got %d", c.RPCPort)
 	}
@@ -260,28 +230,39 @@ func (c *Config) Validate() error {
 	if c.RPCPort == c.P2PPort {
 		return fmt.Errorf("rpc_port and p2p_port must not be the same (%d)", c.RPCPort)
 	}
+	return nil
+}
+
+func (c *Config) validateLimits() error {
 	if c.MaxBlockTxs > MaxBlockTxsUpperBound {
 		return fmt.Errorf("max_block_txs must be at most %d, got %d", MaxBlockTxsUpperBound, c.MaxBlockTxs)
 	}
 	if c.PruneKeepBlocks < 0 || (c.PruneKeepBlocks > 0 && c.PruneKeepBlocks < MinPruneKeepBlocks) {
 		return fmt.Errorf("prune_keep_blocks must be 0 (no pruning) or at least %d, got %d", MinPruneKeepBlocks, c.PruneKeepBlocks)
 	}
-	if err := c.validateNonNegative(); err != nil {
-		return err
-	}
+	return nil
+}
+
+func (c *Config) validateLogLevel() error {
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error", "":
-		// valid
-	default:
-		return fmt.Errorf("log_level must be one of debug/info/warn/error, got %q", c.LogLevel)
+		return nil
 	}
+	return fmt.Errorf("log_level must be one of debug/info/warn/error, got %q", c.LogLevel)
+}
+
+func isPubKeyHex(s string) bool {
+	b, err := hex.DecodeString(s)
+	return err == nil && len(b) == 32
+}
+
+func (c *Config) validateKeys() error {
 	if len(c.Validators) == 0 {
 		return fmt.Errorf("validators list must not be empty")
 	}
 	seen := make(map[string]bool, len(c.Validators))
 	for i, v := range c.Validators {
-		b, err := hex.DecodeString(v)
-		if err != nil || len(b) != 32 {
+		if !isPubKeyHex(v) {
 			return fmt.Errorf("validators[%d]: must be 64-char hex (32 bytes ed25519 pubkey), got %q", i, v)
 		}
 		if seen[v] {
@@ -290,10 +271,14 @@ func (c *Config) Validate() error {
 		seen[v] = true
 	}
 	for i, o := range c.Operators {
-		if b, err := hex.DecodeString(o); err != nil || len(b) != 32 {
+		if !isPubKeyHex(o) {
 			return fmt.Errorf("operators[%d]: must be 64-char hex (32 bytes ed25519 pubkey), got %q", i, o)
 		}
 	}
+	return nil
+}
+
+func (c *Config) validateTrustedProxies() error {
 	for i, e := range c.RPC.TrustedProxies {
 		if strings.Contains(e, "/") {
 			if _, _, err := net.ParseCIDR(e); err != nil {
@@ -303,13 +288,18 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("rpc.trusted_proxies[%d]: invalid IP %q", i, e)
 		}
 	}
-	if c.TLS != nil {
-		t := c.TLS
-		allSet := t.CACert != "" && t.NodeCert != "" && t.NodeKey != ""
-		allEmpty := t.CACert == "" && t.NodeCert == "" && t.NodeKey == ""
-		if !allSet && !allEmpty {
-			return fmt.Errorf("tls: all three paths (ca_cert, node_cert, node_key) must be set or all empty")
-		}
+	return nil
+}
+
+func (c *Config) validateTLS() error {
+	if c.TLS == nil {
+		return nil
+	}
+	t := c.TLS
+	allSet := t.CACert != "" && t.NodeCert != "" && t.NodeKey != ""
+	allEmpty := t.CACert == "" && t.NodeCert == "" && t.NodeKey == ""
+	if !allSet && !allEmpty {
+		return fmt.Errorf("tls: all three paths (ca_cert, node_cert, node_key) must be set or all empty")
 	}
 	return nil
 }
@@ -347,7 +337,7 @@ func (c *Config) validateNonNegative() error {
 	return nil
 }
 
-// Save writes the config to path as formatted JSON.
+// Save writes with 0600: the config may hold the RPC auth token.
 func Save(cfg *Config, path string) error {
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

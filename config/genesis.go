@@ -7,29 +7,19 @@ import (
 	"github.com/tolelom/tolchain/core"
 )
 
-// GenesisHash is a canonical all-zeros previous hash for the genesis block.
+// GenesisHash is the PrevHash of block 0.
 const GenesisHash = "0000000000000000000000000000000000000000000000000000000000000000"
 
-// CreateGenesisBlock builds block #0 deterministically from the config.
-// It also sets initial account balances in state and commits.
+// CreateGenesisBlock credits the alloc accounts, commits that state and
+// returns block 0.
 //
-// The genesis block is fully derived from GenesisConfig: its timestamp comes
-// from genesis.timestamp, and it carries no proposer and no signature. Every
-// node bootstrapping from the same config therefore computes a byte-identical
-// genesis hash, so multi-node fresh bootstraps cannot fork at block 1.
-// Genesis is never validated through PoA ValidateBlock (it is built locally,
-// never received from peers — sync always starts at height 1), so the missing
-// signature does not weaken block validation.
+// Block 0 is derived only from GenesisConfig and has no proposer or
+// signature, so every node builds the same hash. That is safe because it is
+// never received from peers: sync starts at height 1.
 func CreateGenesisBlock(cfg *Config, state core.State) (*core.Block, error) {
-	// Credit all alloc accounts and track total supply.
 	var totalAlloc uint64
 	for pubkeyHex, balance := range cfg.Genesis.Alloc {
-		acc := &core.Account{
-			Address: pubkeyHex,
-			Balance: balance,
-			Nonce:   0,
-		}
-		if err := state.SetAccount(acc); err != nil {
+		if err := state.SetAccount(&core.Account{Address: pubkeyHex, Balance: balance}); err != nil {
 			return nil, err
 		}
 		if totalAlloc > math.MaxUint64-balance {
@@ -42,14 +32,8 @@ func CreateGenesisBlock(cfg *Config, state core.State) (*core.Block, error) {
 		return nil, fmt.Errorf("genesis alloc %d exceeds max_total_supply %d", totalAlloc, cfg.MaxTotalSupply)
 	}
 
-	// Initialize the total supply tracker so the cap check is accurate.
 	if totalAlloc > 0 || cfg.MaxTotalSupply > 0 {
-		supply := &core.Account{
-			Address: core.TotalSupplyAddress,
-			Balance: totalAlloc,
-			Nonce:   0,
-		}
-		if err := state.SetAccount(supply); err != nil {
+		if err := state.SetAccount(&core.Account{Address: core.TotalSupplyAddress, Balance: totalAlloc}); err != nil {
 			return nil, err
 		}
 	}
@@ -62,25 +46,21 @@ func CreateGenesisBlock(cfg *Config, state core.State) (*core.Block, error) {
 		return nil, err
 	}
 
-	// Build the header by hand instead of core.NewBlock: NewBlock stamps
-	// time.Now(), which would make the genesis hash differ per node.
+	// Not core.NewBlock: it stamps time.Now(), which differs per node.
 	block := &core.Block{
 		Header: core.BlockHeader{
 			ChainID:   cfg.Genesis.ChainID,
 			Height:    0,
 			PrevHash:  GenesisHash,
 			StateRoot: stateRoot,
-			// Canonical empty TxRoot (genesis has no transactions).
 			TxRoot:    core.ComputeTxRoot(nil),
 			Timestamp: cfg.Genesis.Timestamp,
-			Proposer:  "", // deterministic genesis: no proposer, no signature
 		},
 	}
 	block.Hash = block.ComputeHash()
 	return block, nil
 }
 
-// IsGenesisHash returns true if the hash is the canonical genesis prev-hash.
 func IsGenesisHash(h string) bool {
 	return h == GenesisHash
 }
