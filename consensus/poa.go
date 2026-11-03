@@ -82,11 +82,6 @@ func (p *PoA) ProduceBlock() (*core.Block, error) {
 	return s.block, nil
 }
 
-const (
-	// defaultMaxBlockTxs is the fallback limit when Config.MaxBlockTxs is not set.
-	defaultMaxBlockTxs = 500
-)
-
 // ValidateBlock checks that block was proposed by the expected validator.
 func (p *PoA) ValidateBlock(block *core.Block) error {
 	if len(p.cfg.Validators) == 0 {

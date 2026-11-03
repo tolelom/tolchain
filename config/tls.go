@@ -7,9 +7,8 @@ import (
 	"os"
 )
 
-// LoadTLSConfig builds a *tls.Config from the PEM paths in cfg.
-// If cfg is nil or all paths are empty it returns (nil, nil), meaning
-// the caller should fall back to plain TCP.
+// LoadTLSConfig returns (nil, nil) when TLS is not configured. Peers must
+// present a certificate from the same CA in both directions.
 func LoadTLSConfig(cfg *TLSConfig) (*tls.Config, error) {
 	if cfg == nil || (cfg.CACert == "" && cfg.NodeCert == "" && cfg.NodeKey == "") {
 		return nil, nil
