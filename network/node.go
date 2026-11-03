@@ -19,12 +19,12 @@ type MessageHandler func(peer *Peer, msg Message)
 
 // Node listens for incoming peers and manages outgoing connections.
 type Node struct {
-	nodeID         string
-	listenAddr     string
-	chainID        string
-	mempool        *core.Mempool
-	tlsConfig      *tls.Config // nil → plain TCP
-	maxPeers       int
+	nodeID          string
+	listenAddr      string
+	chainID         string
+	mempool         *core.Mempool
+	tlsConfig       *tls.Config // nil → plain TCP
+	maxPeers        int
 	writeTimeoutSec int
 	readTimeoutSec  int
 	maxMessageSize  int

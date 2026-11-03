@@ -72,8 +72,8 @@ type levelBatch struct {
 }
 
 func (lb *levelBatch) Set(key, value []byte) { lb.b.Put(key, value) }
-func (lb *levelBatch) Delete(key []byte)      { lb.b.Delete(key) }
-func (lb *levelBatch) Reset()                 { lb.b.Reset() }
+func (lb *levelBatch) Delete(key []byte)     { lb.b.Delete(key) }
+func (lb *levelBatch) Reset()                { lb.b.Reset() }
 func (lb *levelBatch) Write() error {
 	return lb.db.Write(lb.b, &opt.WriteOptions{Sync: true})
 }

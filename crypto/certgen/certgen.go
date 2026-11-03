@@ -56,12 +56,12 @@ func GenerateAll(dir, nodeID string, opts *Options) error {
 	}
 
 	caTemplate := &x509.Certificate{
-		SerialNumber: caSerial,
-		Subject:      pkix.Name{CommonName: "TOL Chain CA"},
-		NotBefore:    time.Now().Add(certNotBeforeOffset),
-		NotAfter:     time.Now().Add(caValidityDuration),
-		KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		IsCA:         true,
+		SerialNumber:          caSerial,
+		Subject:               pkix.Name{CommonName: "TOL Chain CA"},
+		NotBefore:             time.Now().Add(certNotBeforeOffset),
+		NotAfter:              time.Now().Add(caValidityDuration),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		IsCA:                  true,
 		BasicConstraintsValid: true,
 		MaxPathLen:            0,
 		MaxPathLenZero:        true,

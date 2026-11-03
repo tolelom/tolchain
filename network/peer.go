@@ -13,7 +13,6 @@ import (
 	"time"
 )
 
-
 // MsgType labels a network message.
 type MsgType string
 
