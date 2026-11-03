@@ -37,7 +37,6 @@ func (a *applyBlock) ValidateBlock() error {
 	return nil
 }
 
-// Lock은 RPC가 반쯤 적용된 상태를 보지 못하게 블록 실행 쓰기 잠금을 잡는다.
 func (a *applyBlock) Lock() error {
 	if a.s.state != nil {
 		a.s.state.BlockLock()
@@ -52,7 +51,6 @@ func (a *applyBlock) Unlock() error {
 	return nil
 }
 
-// Snapshot은 AddBlock이 실패하면 되돌릴 수 있게 스냅샷을 잡는다.
 func (a *applyBlock) Snapshot() error {
 	if !a.executing() {
 		return nil
@@ -120,7 +118,6 @@ func (a *applyBlock) ComputeRoot() error {
 	return nil
 }
 
-// errRootMismatch는 실행 결과의 상태 루트가 블록 헤더와 다르다는 뜻이다.
 type errRootMismatch struct{ computed, want string }
 
 func (e *errRootMismatch) Error() string {
@@ -151,7 +148,6 @@ func (a *applyBlock) CommitState() error {
 	return a.s.state.Commit()
 }
 
-// FlushEvents는 블록이 커밋된 뒤 모아 둔 이벤트를 내보낸다.
 func (a *applyBlock) FlushEvents() error {
 	if a.executing() && a.buf != nil {
 		a.buf.Flush(a.s.emitter)
@@ -176,7 +172,7 @@ func (a *applyBlock) Fatal(step string, err error) {
 	os.Exit(1)
 }
 
-// applyFailure는 apply_block이 실패한 단계에 맞는 로그를 남긴다.
+// applyFailure logs the failed step and returns its name.
 func applyFailure(err error, b *core.Block) (step string) {
 	var fe *FlowError
 	if !errors.As(err, &fe) {

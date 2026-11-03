@@ -21,7 +21,6 @@ const (
 	keyActiveListings   = "idx:market:active"
 )
 
-// TxResult stores the outcome of a transaction after execution.
 type TxResult struct {
 	TxID        string `json:"tx_id"`
 	BlockHeight int64  `json:"block_height"`
@@ -29,15 +28,13 @@ type TxResult struct {
 	Error       string `json:"error"`
 }
 
-// Indexer subscribes to chain events and updates secondary lookup tables.
+// Indexer keeps lookup lists up to date from committed-block events.
 type Indexer struct {
-	db      storage.DB
-	emitter *events.Emitter
+	db storage.DB
 }
 
-// New creates an Indexer backed by db and subscribes to relevant events.
 func New(db storage.DB, emitter *events.Emitter) *Indexer {
-	idx := &Indexer{db: db, emitter: emitter}
+	idx := &Indexer{db: db}
 	emitter.Subscribe(events.EventAssetMinted, idx.onAssetMinted)
 	emitter.Subscribe(events.EventAssetTransfer, idx.onAssetTransferred)
 	emitter.Subscribe(events.EventAssetBurned, idx.onAssetBurned)
@@ -49,17 +46,15 @@ func New(db storage.DB, emitter *events.Emitter) *Indexer {
 	return idx
 }
 
-// GetAssetsByOwner returns all asset IDs owned by the given pubkey.
 func (idx *Indexer) GetAssetsByOwner(owner string) ([]string, error) {
 	return idx.getList(prefixOwnerAssets + owner)
 }
 
-// GetSessionsByPlayer returns all session IDs a player participated in.
 func (idx *Indexer) GetSessionsByPlayer(player string) ([]string, error) {
 	return idx.getList(prefixPlayerSession + player)
 }
 
-// GetTxResult returns the execution result of a transaction, or nil if not found.
+// GetTxResult returns nil, nil for an unknown tx.
 func (idx *Indexer) GetTxResult(txID string) (*TxResult, error) {
 	data, err := idx.db.Get([]byte(prefixTxResult + txID))
 	if err != nil {
@@ -75,12 +70,10 @@ func (idx *Indexer) GetTxResult(txID string) (*TxResult, error) {
 	return &result, nil
 }
 
-// GetActiveListings returns all currently active market listing IDs.
 func (idx *Indexer) GetActiveListings() ([]string, error) {
 	return idx.getList(keyActiveListings)
 }
 
-// PaginatedResult holds a page of IDs plus total count.
 type PaginatedResult struct {
 	IDs    []string `json:"ids"`
 	Total  int      `json:"total"`
@@ -126,67 +119,57 @@ func (idx *Indexer) getListPaginated(key string, offset, limit int) (*PaginatedR
 	return &PaginatedResult{IDs: ids[offset:end], Total: total, Offset: offset, Limit: limit}, nil
 }
 
-// GetAssetsByOwnerPaginated returns a paginated slice of asset IDs.
 func (idx *Indexer) GetAssetsByOwnerPaginated(owner string, offset, limit int) (*PaginatedResult, error) {
 	return idx.getListPaginated(prefixOwnerAssets+owner, offset, limit)
 }
 
-// GetSessionsByPlayerPaginated returns a paginated slice of session IDs.
 func (idx *Indexer) GetSessionsByPlayerPaginated(player string, offset, limit int) (*PaginatedResult, error) {
 	return idx.getListPaginated(prefixPlayerSession+player, offset, limit)
 }
 
-// GetActiveListingsPaginated returns a paginated slice of active listing IDs.
 func (idx *Indexer) GetActiveListingsPaginated(offset, limit int) (*PaginatedResult, error) {
 	return idx.getListPaginated(keyActiveListings, offset, limit)
 }
 
-// ---- event handlers ----
+// Event handlers read Data leniently: a field that is missing or of the wrong
+// type skips that index update instead of failing the event.
+
+func str(ev events.Event, key string) string {
+	v, _ := ev.Data[key].(string)
+	return v
+}
 
 func (idx *Indexer) onAssetMinted(ev events.Event) {
-	owner, _ := ev.Data["owner"].(string)
-	assetID, _ := ev.Data["asset_id"].(string)
+	owner, assetID := str(ev, "owner"), str(ev, "asset_id")
 	if owner == "" || assetID == "" {
 		return
 	}
-	if err := idx.addToList(prefixOwnerAssets+owner, assetID); err != nil {
-		slog.Error("mint index write failed", "component", "indexer", "owner", owner, "asset_id", assetID, "error", err)
-	}
+	idx.add(prefixOwnerAssets+owner, assetID)
 }
 
 func (idx *Indexer) onAssetTransferred(ev events.Event) {
-	from, _ := ev.Data["from"].(string)
-	to, _ := ev.Data["to"].(string)
-	assetID, _ := ev.Data["asset_id"].(string)
+	from, to, assetID := str(ev, "from"), str(ev, "to"), str(ev, "asset_id")
 	if assetID == "" || from == "" || to == "" {
 		return
 	}
-	if err := idx.removeFromList(prefixOwnerAssets+from, assetID); err != nil {
-		slog.Error("transfer remove failed", "component", "indexer", "from", from, "asset_id", assetID, "error", err)
-	}
-	if err := idx.addToList(prefixOwnerAssets+to, assetID); err != nil {
-		slog.Error("transfer add failed", "component", "indexer", "to", to, "asset_id", assetID, "error", err)
-	}
+	idx.remove(prefixOwnerAssets+from, assetID)
+	idx.add(prefixOwnerAssets+to, assetID)
 }
 
 func (idx *Indexer) onAssetBurned(ev events.Event) {
-	owner, _ := ev.Data["owner"].(string)
-	assetID, _ := ev.Data["asset_id"].(string)
+	owner, assetID := str(ev, "owner"), str(ev, "asset_id")
 	if owner == "" || assetID == "" {
 		return
 	}
-	if err := idx.removeFromList(prefixOwnerAssets+owner, assetID); err != nil {
-		slog.Error("burn remove failed", "component", "indexer", "owner", owner, "asset_id", assetID, "error", err)
-	}
+	idx.remove(prefixOwnerAssets+owner, assetID)
 }
 
 func (idx *Indexer) onSessionOpen(ev events.Event) {
-	sessionID, _ := ev.Data["session_id"].(string)
+	sessionID := str(ev, "session_id")
 	if sessionID == "" {
 		return
 	}
-	// ev.Data["players"] may be []string (from direct Go calls) or []any
-	// (from JSON round-tripping). Handle both with a type switch.
+	// []string when emitted in-process, []any after a JSON round trip.
 	var players []string
 	switch v := ev.Data["players"].(type) {
 	case []string:
@@ -200,31 +183,20 @@ func (idx *Indexer) onSessionOpen(ev events.Event) {
 	}
 	for _, player := range players {
 		if player != "" {
-			if err := idx.addToList(prefixPlayerSession+player, sessionID); err != nil {
-				slog.Error("session index write failed", "component", "indexer", "player", player, "session_id", sessionID, "error", err)
-			}
+			idx.add(prefixPlayerSession+player, sessionID)
 		}
 	}
 }
 
 func (idx *Indexer) onMarketBuy(ev events.Event) {
-	seller, _ := ev.Data["seller"].(string)
-	buyer, _ := ev.Data["buyer"].(string)
-	assetID, _ := ev.Data["asset_id"].(string)
-	listingID, _ := ev.Data["listing_id"].(string)
+	seller, buyer, assetID, listingID := str(ev, "seller"), str(ev, "buyer"), str(ev, "asset_id"), str(ev, "listing_id")
 	if assetID == "" || seller == "" || buyer == "" {
 		return
 	}
-	if err := idx.removeFromList(prefixOwnerAssets+seller, assetID); err != nil {
-		slog.Error("market buy remove failed", "component", "indexer", "seller", seller, "asset_id", assetID, "error", err)
-	}
-	if err := idx.addToList(prefixOwnerAssets+buyer, assetID); err != nil {
-		slog.Error("market buy add failed", "component", "indexer", "buyer", buyer, "asset_id", assetID, "error", err)
-	}
+	idx.remove(prefixOwnerAssets+seller, assetID)
+	idx.add(prefixOwnerAssets+buyer, assetID)
 	if listingID != "" {
-		if err := idx.removeFromList(keyActiveListings, listingID); err != nil {
-			slog.Error("market buy listing remove failed", "component", "indexer", "listing_id", listingID, "error", err)
-		}
+		idx.remove(keyActiveListings, listingID)
 	}
 }
 
@@ -233,12 +205,11 @@ func (idx *Indexer) onTxExecuted(ev events.Event) {
 		return
 	}
 	success, _ := ev.Data["success"].(bool)
-	errMsg, _ := ev.Data["error"].(string)
 	result := TxResult{
 		TxID:        ev.TxID,
 		BlockHeight: ev.BlockHeight,
 		Success:     success,
-		Error:       errMsg,
+		Error:       str(ev, "error"),
 	}
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -251,29 +222,20 @@ func (idx *Indexer) onTxExecuted(ev events.Event) {
 }
 
 func (idx *Indexer) onMarketList(ev events.Event) {
-	listingID, _ := ev.Data["listing_id"].(string)
-	if listingID == "" {
-		return
-	}
-	if err := idx.addToList(keyActiveListings, listingID); err != nil {
-		slog.Error("market list add failed", "component", "indexer", "listing_id", listingID, "error", err)
+	if listingID := str(ev, "listing_id"); listingID != "" {
+		idx.add(keyActiveListings, listingID)
 	}
 }
 
 func (idx *Indexer) onMarketCancel(ev events.Event) {
-	listingID, _ := ev.Data["listing_id"].(string)
-	if listingID == "" {
-		return
-	}
-	if err := idx.removeFromList(keyActiveListings, listingID); err != nil {
-		slog.Error("market cancel remove failed", "component", "indexer", "listing_id", listingID, "error", err)
+	if listingID := str(ev, "listing_id"); listingID != "" {
+		idx.remove(keyActiveListings, listingID)
 	}
 }
 
-// ---- list helpers (prefix-key approach) ----
+// A list is stored as one key per item, "<list>:<item>" → "1", so adding or
+// removing an item never rewrites the whole list.
 
-// getList collects all item IDs stored under the given prefix using an iterator.
-// Keys are stored as "<prefix>:<item>" → "1".
 func (idx *Indexer) getList(prefix string) ([]string, error) {
 	iterPrefix := prefix + ":"
 	it := idx.db.NewIterator([]byte(iterPrefix))
@@ -292,12 +254,14 @@ func (idx *Indexer) getList(prefix string) ([]string, error) {
 	return ids, nil
 }
 
-// addToList stores a single key "<prefix>:<item>" → "1".
-func (idx *Indexer) addToList(prefix, item string) error {
-	return idx.db.Set([]byte(prefix+":"+item), []byte("1"))
+func (idx *Indexer) add(list, item string) {
+	if err := idx.db.Set([]byte(list+":"+item), []byte("1")); err != nil {
+		slog.Error("index add failed", "component", "indexer", "list", list, "item", item, "error", err)
+	}
 }
 
-// removeFromList deletes the key "<prefix>:<item>".
-func (idx *Indexer) removeFromList(prefix, item string) error {
-	return idx.db.Delete([]byte(prefix + ":" + item))
+func (idx *Indexer) remove(list, item string) {
+	if err := idx.db.Delete([]byte(list + ":" + item)); err != nil {
+		slog.Error("index remove failed", "component", "indexer", "list", list, "item", item, "error", err)
+	}
 }

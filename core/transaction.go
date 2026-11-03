@@ -9,39 +9,37 @@ import (
 	"github.com/tolelom/tolchain/crypto"
 )
 
-// TxType과 그 상수는 설계(design/tolchain.yaml)에서 생성한다: tx_type.gen.go
+// TxType and its constants are generated from design/tolchain.yaml.
 
-// Transaction is the atomic unit of work on the chain.
-// From holds the sender's full hex-encoded ed25519 public key (64 chars).
-// ChainID prevents replay of this transaction on a different network.
-// Signature covers all fields except Signature itself.
+// Transaction is signed by From (an ed25519 pubkey hex). OnBehalfOf names the
+// account it acts for under a delegation; its nonce and balance are used.
 type Transaction struct {
-	ID        string          `json:"id"`
-	ChainID   string          `json:"chain_id"` // must match the receiving node's chain ID
-	Type      TxType          `json:"type"`
-	From      string          `json:"from"`      // hex-encoded ed25519 public key
-	Nonce     uint64          `json:"nonce"`
-	Fee       uint64          `json:"fee"`
-	Timestamp int64           `json:"timestamp"`
-	Payload   json.RawMessage `json:"payload"`
+	ID         string          `json:"id"`
+	ChainID    string          `json:"chain_id"`
+	Type       TxType          `json:"type"`
+	From       string          `json:"from"`
+	Nonce      uint64          `json:"nonce"`
+	Fee        uint64          `json:"fee"`
+	Timestamp  int64           `json:"timestamp"`
+	Payload    json.RawMessage `json:"payload"`
 	Signature  string          `json:"signature"`
 	OnBehalfOf string          `json:"on_behalf_of,omitempty"`
 }
 
-// signingBody holds the fields that are covered by the signature.
+// signingBody is the signing input: every field but ID and Signature. Its
+// field order and JSON tags are part of consensus; ChainID in it stops replay
+// on other networks.
 type signingBody struct {
-	ChainID   string          `json:"chain_id"`
-	Type      TxType          `json:"type"`
-	From      string          `json:"from"`
-	Nonce     uint64          `json:"nonce"`
-	Fee       uint64          `json:"fee"`
-	Timestamp int64           `json:"timestamp"`
+	ChainID    string          `json:"chain_id"`
+	Type       TxType          `json:"type"`
+	From       string          `json:"from"`
+	Nonce      uint64          `json:"nonce"`
+	Fee        uint64          `json:"fee"`
+	Timestamp  int64           `json:"timestamp"`
 	Payload    json.RawMessage `json:"payload"`
 	OnBehalfOf string          `json:"on_behalf_of,omitempty"`
 }
 
-// Hash returns a deterministic hash of the transaction (sans Signature).
-// Panics if marshalling fails (which cannot happen in practice).
 func (tx *Transaction) Hash() string {
 	body := signingBody{
 		ChainID:    tx.ChainID,
@@ -55,21 +53,20 @@ func (tx *Transaction) Hash() string {
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
-		panic("transaction hash marshal failed: " + err.Error())
+		panic("transaction hash marshal failed: " + err.Error()) // unreachable for these field types
 	}
 	return crypto.Hash(data)
 }
 
-// Sign computes the signature and sets ID.
+// Sign sets ID to the hash and signs it.
 func (tx *Transaction) Sign(priv crypto.PrivateKey) {
 	hash := tx.Hash()
 	tx.Signature = crypto.Sign(priv, []byte(hash))
 	tx.ID = hash
 }
 
-// Verify checks the signature, that From is a valid public key, and that
-// tx.ID matches the recomputed hash. This prevents a transaction whose ID
-// was tampered with from being accepted into the mempool or a block.
+// Verify also requires ID to equal the recomputed hash, so a tx cannot enter
+// the mempool or a block under a forged ID.
 func (tx *Transaction) Verify() error {
 	if tx.From == "" {
 		return errors.New("missing from field")
@@ -85,9 +82,7 @@ func (tx *Transaction) Verify() error {
 	return crypto.Verify(pub, []byte(hash), tx.Signature)
 }
 
-// NewTransaction creates an unsigned transaction with the current timestamp.
-// chainID must match the target network (e.g. "tolchain-dev") to prevent
-// cross-chain replay attacks.
+// NewTransaction returns an unsigned tx stamped with the current time.
 func NewTransaction(chainID string, typ TxType, from string, nonce, fee uint64, payload any) (*Transaction, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -104,119 +99,102 @@ func NewTransaction(chainID string, typ TxType, from string, nonce, fee uint64, 
 	}, nil
 }
 
-// ---- Payload types ----
-
-// TransferPayload transfers native tokens.
 type TransferPayload struct {
 	To     string `json:"to"`
 	Amount uint64 `json:"amount"`
 }
 
-// MintAssetPayload mints a new asset from a registered template.
 type MintAssetPayload struct {
 	TemplateID string         `json:"template_id"`
-	Owner      string         `json:"owner"`       // recipient pubkey hex
+	Owner      string         `json:"owner"` // empty → the sender
 	Properties map[string]any `json:"properties"`
 }
 
-// BurnAssetPayload permanently destroys an asset.
 type BurnAssetPayload struct {
 	AssetID string `json:"asset_id"`
 }
 
-// TransferAssetPayload moves an asset to a new owner.
 type TransferAssetPayload struct {
 	AssetID string `json:"asset_id"`
-	To      string `json:"to"` // recipient pubkey hex
+	To      string `json:"to"`
 }
 
-// RegisterTemplatePayload defines a new class of game assets.
 type RegisterTemplatePayload struct {
 	ID        string         `json:"id"`
 	Name      string         `json:"name"`
-	Schema    map[string]any `json:"schema"`    // allowed property keys → type hints
+	Schema    map[string]any `json:"schema"`
 	Tradeable bool           `json:"tradeable"`
 }
 
-// SessionOpenPayload opens a new game session and locks stakes.
-// Signatures must contain each player's (except the effective sender's)
-// ed25519 signature over the canonical consent message returned by
-// SessionConsentMessage(chainID, SessionID, GameID, Stakes).
+// SessionOpenPayload needs, from every player except the sender, a signature
+// over SessionConsentMessage(chainID, SessionID, GameID, Stakes).
 type SessionOpenPayload struct {
 	SessionID  string            `json:"session_id"`
 	GameID     string            `json:"game_id"`
-	Players    []string          `json:"players"`              // participant pubkey hexes
-	Stakes     uint64            `json:"stakes"`               // tokens locked per player
-	Signatures map[string]string `json:"signatures,omitempty"` // pubkey hex → signature hex
+	Players    []string          `json:"players"`
+	Stakes     uint64            `json:"stakes"`               // per player
+	Signatures map[string]string `json:"signatures,omitempty"` // player → signature hex
 }
 
-// SessionResultPayload closes a session and distributes rewards.
 type SessionResultPayload struct {
 	SessionID string            `json:"session_id"`
-	Outcome   map[string]uint64 `json:"outcome"` // pubkey hex → reward
+	Outcome   map[string]uint64 `json:"outcome"` // player → reward; must sum to all stakes
 }
 
-// ListMarketPayload lists an asset for sale.
 type ListMarketPayload struct {
 	AssetID string `json:"asset_id"`
 	Price   uint64 `json:"price"`
 }
 
-// BuyMarketPayload purchases an active market listing.
 type BuyMarketPayload struct {
 	ListingID string `json:"listing_id"`
 }
 
-// CancelListingPayload cancels an active market listing.
 type CancelListingPayload struct {
 	ListingID string `json:"listing_id"`
 }
 
-// SessionCancelPayload cancels an open session and refunds stakes.
 type SessionCancelPayload struct {
 	SessionID string `json:"session_id"`
 }
 
-// EquipItemPayload equips an asset to a named slot.
 type EquipItemPayload struct {
 	AssetID string `json:"asset_id"`
 	Slot    string `json:"slot"`
 }
 
-// UnequipItemPayload removes an asset from its equipped slot.
 type UnequipItemPayload struct {
 	AssetID string `json:"asset_id"`
 }
 
-// GrantRewardPayload atomically grants tokens and mints assets. Operator-only.
+// GrantRewardPayload mints tokens and assets for Recipient in one tx.
 type GrantRewardPayload struct {
-	Recipient   string           `json:"recipient"`
-	TokenAmount uint64           `json:"token_amount"`
+	Recipient   string             `json:"recipient"`
+	TokenAmount uint64             `json:"token_amount"`
 	Assets      []MintAssetPayload `json:"assets"`
 }
 
+// A random result is SHA-256(secret + hash of the block RandomTargetDelay
+// after the commit), revealable for RandomRevealWindow blocks after that.
 const (
-	// RandomTargetDelay is the distance from the commit block to the target
-	// block whose hash the random result is bound to.
-	RandomTargetDelay = 2
-	// RandomRevealWindow is the number of blocks after the target block in
-	// which a reveal is accepted.
+	RandomTargetDelay  = 2
 	RandomRevealWindow = 100
 )
 
-// RandomCommitPayload commits a hash for the commit-reveal random scheme.
 type RandomCommitPayload struct {
 	CommitID   string `json:"commit_id"`
-	CommitHash string `json:"commit_hash"` // hex SHA-256 of secret
+	CommitHash string `json:"commit_hash"` // hex SHA-256 of the secret
 }
 
-// RandomRevealPayload reveals the secret for a previous commitment.
 type RandomRevealPayload struct {
 	CommitID string `json:"commit_id"`
 	Secret   string `json:"secret"`
 }
 
-// GrantDelegationPayload is the payload for grant_delegation transactions.
+// GrantDelegationPayload lets Grantee sign AllowTypes txs for the sender.
+// ExpiresAt is Unix seconds compared with the block time; it and the
+// limits mean "unlimited" when 0. MaxAmount caps tokens moved by transfer,
+// buy_market and grant_reward.
 type GrantDelegationPayload struct {
 	Grantee    string   `json:"grantee"`
 	AllowTypes []string `json:"allow_types"`
@@ -225,12 +203,10 @@ type GrantDelegationPayload struct {
 	MaxAmount  uint64   `json:"max_amount"`
 }
 
-// RevokeDelegationPayload is the payload for revoke_delegation transactions.
 type RevokeDelegationPayload struct {
 	Grantee string `json:"grantee"`
 }
 
-// DelegationGrant is the state record for an active delegation.
 type DelegationGrant struct {
 	Granter     string   `json:"granter"`
 	Grantee     string   `json:"grantee"`

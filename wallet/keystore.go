@@ -1,4 +1,5 @@
-// Package wallet provides key management and transaction signing helpers.
+// Package wallet holds a signing key, its encrypted keystore file and
+// builders for signed transactions.
 package wallet
 
 import (
@@ -17,13 +18,13 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
+// The keystore is AES-256-GCM under a PBKDF2-SHA256 key. The iteration
+// count is not stored in the file, so changing it makes existing keystores
+// undecryptable.
 const (
-	// saltSize is the byte length of the random salt for key derivation.
-	saltSize = 16
-	// pbkdf2Iterations is the number of PBKDF2 rounds for key derivation.
+	saltSize         = 16
 	pbkdf2Iterations = 210_000
-	// derivedKeySize is the byte length of the AES key derived from the password.
-	derivedKeySize = 32
+	derivedKeySize   = 32
 )
 
 type keystoreFile struct {
@@ -33,8 +34,7 @@ type keystoreFile struct {
 	CipherText string `json:"cipher_text"`
 }
 
-// SaveKey encrypts priv with password and writes it to path.
-// Key derivation: PBKDF2-SHA256 with 210k iterations (see deriveKey).
+// SaveKey writes the encrypted key with 0600 permissions.
 func SaveKey(path, password string, priv crypto.PrivateKey) error {
 	salt := make([]byte, saltSize)
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
@@ -69,7 +69,6 @@ func SaveKey(path, password string, priv crypto.PrivateKey) error {
 	return os.WriteFile(path, data, 0600)
 }
 
-// LoadKey decrypts the keystore at path using password.
 func LoadKey(path, password string) (crypto.PrivateKey, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

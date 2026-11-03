@@ -13,26 +13,33 @@ import (
 	"github.com/tolelom/tolchain/core"
 )
 
-// LevelDB implements DB using LevelDB.
+// Block store key layout, shared with the pruner and offline tools.
+const (
+	BlockKeyPrefix = "block:"
+	ChainTipKey    = "chain:tip"
+)
+
+func blockKey(hash string) []byte { return []byte(BlockKeyPrefix + hash) }
+
+func heightKey(height int64) []byte { return []byte(fmt.Sprintf("height:%d", height)) }
+
 type LevelDB struct {
 	db *leveldb.DB
 }
 
-// NewLevelDB opens (or creates) a LevelDB database at path.
-// If the database is corrupted, it attempts automatic recovery.
+// NewLevelDB opens or creates the database at path, running goleveldb's
+// RecoverFile when the manifest is corrupted.
 func NewLevelDB(path string) (*LevelDB, error) {
 	db, err := leveldb.OpenFile(path, nil)
-	if err != nil {
-		if _, ok := err.(*errors.ErrCorrupted); ok {
-			slog.Warn("corrupted database detected, attempting recovery", "path", path)
-			db, err = leveldb.RecoverFile(path, nil)
-			if err != nil {
-				return nil, fmt.Errorf("recover leveldb %q: %w", path, err)
-			}
-			slog.Info("database recovery successful", "path", path)
-		} else {
-			return nil, fmt.Errorf("open leveldb %q: %w", path, err)
+	if _, corrupted := err.(*errors.ErrCorrupted); corrupted {
+		slog.Warn("corrupted database detected, attempting recovery", "path", path)
+		db, err = leveldb.RecoverFile(path, nil)
+		if err != nil {
+			return nil, fmt.Errorf("recover leveldb %q: %w", path, err)
 		}
+		slog.Info("database recovery successful", "path", path)
+	} else if err != nil {
+		return nil, fmt.Errorf("open leveldb %q: %w", path, err)
 	}
 	return &LevelDB{db: db}, nil
 }
@@ -65,27 +72,24 @@ func (l *LevelDB) Close() error {
 	return l.db.Close()
 }
 
-// levelBatch wraps leveldb.Batch for atomic multi-key writes.
 type levelBatch struct {
 	db *leveldb.DB
 	b  *leveldb.Batch
 }
 
 func (lb *levelBatch) Set(key, value []byte) { lb.b.Put(key, value) }
-func (lb *levelBatch) Delete(key []byte)      { lb.b.Delete(key) }
-func (lb *levelBatch) Reset()                 { lb.b.Reset() }
+func (lb *levelBatch) Delete(key []byte)     { lb.b.Delete(key) }
+func (lb *levelBatch) Reset()                { lb.b.Reset() }
+
+// Write syncs to disk: a committed block must survive a crash.
 func (lb *levelBatch) Write() error {
 	return lb.db.Write(lb.b, &opt.WriteOptions{Sync: true})
 }
 
-// ---- BlockStore implementation ----
-
-// LevelBlockStore implements core.BlockStore on top of LevelDB.
 type LevelBlockStore struct {
 	db *LevelDB
 }
 
-// NewLevelBlockStore wraps a LevelDB instance as a BlockStore.
 func NewLevelBlockStore(db *LevelDB) *LevelBlockStore {
 	return &LevelBlockStore{db: db}
 }
@@ -95,11 +99,11 @@ func (s *LevelBlockStore) PutBlock(block *core.Block) error {
 	if err != nil {
 		return err
 	}
-	return s.db.Set([]byte("block:"+block.Hash), data)
+	return s.db.Set(blockKey(block.Hash), data)
 }
 
 func (s *LevelBlockStore) GetBlock(hash string) (*core.Block, error) {
-	data, err := s.db.Get([]byte("block:" + hash))
+	data, err := s.db.Get(blockKey(hash))
 	if err != nil {
 		return nil, err
 	}
@@ -111,29 +115,25 @@ func (s *LevelBlockStore) GetBlock(hash string) (*core.Block, error) {
 }
 
 func (s *LevelBlockStore) PutBlockByHeight(height int64, hash string) error {
-	key := fmt.Sprintf("height:%d", height)
-	return s.db.Set([]byte(key), []byte(hash))
+	return s.db.Set(heightKey(height), []byte(hash))
 }
 
 func (s *LevelBlockStore) GetBlockByHeight(height int64) (*core.Block, error) {
-	key := fmt.Sprintf("height:%d", height)
-	hash, err := s.db.Get([]byte(key))
+	hash, err := s.db.Get(heightKey(height))
 	if err != nil {
 		return nil, err
 	}
 	return s.GetBlock(string(hash))
 }
 
-// GetBlockRange returns up to limit blocks starting from fromHeight.
-// It looks up each height key sequentially and stops at the first missing
-// height (end of chain). Any other storage error is returned to the caller.
+// GetBlockRange stops at the first missing height (end of chain).
 func (s *LevelBlockStore) GetBlockRange(fromHeight int64, limit int) ([]*core.Block, error) {
 	blocks := make([]*core.Block, 0, limit)
 	for h := fromHeight; h < fromHeight+int64(limit); h++ {
 		b, err := s.GetBlockByHeight(h)
 		if err != nil {
 			if stderrors.Is(err, core.ErrNotFound) {
-				break // no more blocks at this height
+				break
 			}
 			return nil, fmt.Errorf("get block at height %d: %w", h, err)
 		}
@@ -143,8 +143,8 @@ func (s *LevelBlockStore) GetBlockRange(fromHeight int64, limit int) ([]*core.Bl
 }
 
 func (s *LevelBlockStore) GetTip() (string, error) {
-	val, err := s.db.Get([]byte("chain:tip"))
-	if err == core.ErrNotFound {
+	val, err := s.db.Get([]byte(ChainTipKey))
+	if stderrors.Is(err, core.ErrNotFound) {
 		return "", nil
 	}
 	if err != nil {
@@ -154,19 +154,19 @@ func (s *LevelBlockStore) GetTip() (string, error) {
 }
 
 func (s *LevelBlockStore) SetTip(hash string) error {
-	return s.db.Set([]byte("chain:tip"), []byte(hash))
+	return s.db.Set([]byte(ChainTipKey), []byte(hash))
 }
 
-// CommitBlock atomically writes block data, height index, and tip in a single
-// batch so that a crash cannot leave the store in an inconsistent state.
+// CommitBlock writes the block, its height index and the tip in one batch so a
+// crash cannot leave them inconsistent.
 func (s *LevelBlockStore) CommitBlock(block *core.Block) error {
 	data, err := json.Marshal(block)
 	if err != nil {
 		return err
 	}
 	batch := s.db.NewBatch()
-	batch.Set([]byte("block:"+block.Hash), data)
-	batch.Set([]byte(fmt.Sprintf("height:%d", block.Header.Height)), []byte(block.Hash))
-	batch.Set([]byte("chain:tip"), []byte(block.Hash))
+	batch.Set(blockKey(block.Hash), data)
+	batch.Set(heightKey(block.Header.Height), []byte(block.Hash))
+	batch.Set([]byte(ChainTipKey), []byte(block.Hash))
 	return batch.Write()
 }

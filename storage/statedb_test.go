@@ -488,3 +488,40 @@ func TestStateDB_GetRandomCommitment_CorruptData(t *testing.T) {
 		t.Fatal("expected error for corrupt random commitment data")
 	}
 }
+
+// RPC returns these lists as-is, so their order must not depend on map
+// iteration: committed and buffered grants come back sorted by key.
+func TestDelegationListsAreKeyOrdered(t *testing.T) {
+	s := newTestStateDB(t)
+	names := []string{"g5", "g1", "g7", "g3", "g0", "g6", "g2", "g4"}
+	for i, n := range names {
+		if err := s.SetDelegation(&core.DelegationGrant{Granter: "alice", Grantee: n}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetDelegation(&core.DelegationGrant{Granter: n, Grantee: "bob"}); err != nil {
+			t.Fatal(err)
+		}
+		if i == len(names)/2 {
+			if err := s.Commit(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for round := 0; round < 20; round++ {
+		byGranter, err := s.GetDelegationsByGranter("alice")
+		if err != nil {
+			t.Fatal(err)
+		}
+		byGrantee, err := s.GetDelegationsByGrantee("bob")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range byGranter {
+			want := "g" + string(rune('0'+i))
+			if byGranter[i].Grantee != want || byGrantee[i].Granter != want {
+				t.Fatalf("round %d index %d: got grantee %s / granter %s, want %s",
+					round, i, byGranter[i].Grantee, byGrantee[i].Granter, want)
+			}
+		}
+	}
+}

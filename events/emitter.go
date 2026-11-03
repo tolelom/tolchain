@@ -5,10 +5,10 @@ import (
 	"sync"
 )
 
-// EventType과 그 상수, EventTypeValues는 설계(design/tolchain.yaml)에서 생성한다: event_type.gen.go
-// 이벤트별 Data의 모양은 chain_event.gen.go의 <이벤트>Data가 정한다.
+// EventType, its values and each event's Data shape (<Event>Data) are
+// generated from design/tolchain.yaml.
 
-// Event carries a typed payload emitted after a state change.
+// Event is serialized as-is to SSE clients.
 type Event struct {
 	Type        EventType      `json:"type"`
 	TxID        string         `json:"tx_id"`
@@ -16,30 +16,26 @@ type Event struct {
 	Data        map[string]any `json:"data"`
 }
 
-// Handler is a callback invoked for matching events.
 type Handler func(Event)
 
-// Emitter is a simple pub/sub broker. Subscribe before Emit.
+// Emitter delivers events synchronously to subscribers of their type.
 type Emitter struct {
 	mu       sync.RWMutex
 	handlers map[EventType][]Handler
 }
 
-// NewEmitter creates an Emitter with no subscribers.
 func NewEmitter() *Emitter {
 	return &Emitter{handlers: make(map[EventType][]Handler)}
 }
 
-// Subscribe registers h to be called whenever typ is emitted.
 func (e *Emitter) Subscribe(typ EventType, h Handler) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.handlers[typ] = append(e.handlers[typ], h)
 }
 
-// Emit delivers ev to all subscribers for ev.Type synchronously.
-// Each handler is guarded by panic recovery so a misbehaving subscriber
-// cannot crash the node or halt block production.
+// Emit recovers a subscriber's panic so it cannot take down block production,
+// which emits on its own goroutine.
 func (e *Emitter) Emit(ev Event) {
 	e.mu.RLock()
 	handlers := e.handlers[ev.Type]

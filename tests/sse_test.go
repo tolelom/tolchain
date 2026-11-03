@@ -97,7 +97,7 @@ func newPipeResponseWriter() (*pipeResponseWriter, *pipeResponseWriter) {
 	return w, w
 }
 
-func (w *pipeResponseWriter) Header() http.Header { return w.header }
+func (w *pipeResponseWriter) Header() http.Header  { return w.header }
 func (w *pipeResponseWriter) WriteHeader(code int) { w.status = code }
 func (w *pipeResponseWriter) Write(b []byte) (int, error) {
 	w.mu.Lock()

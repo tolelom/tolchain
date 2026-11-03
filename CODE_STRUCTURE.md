@@ -99,6 +99,8 @@ tolchain/
 - 수수료 선차감 → 논스 검증 → 핸들러 디스패치
 - 실패 시 스냅샷 롤백
 
+**vm/context.go, vm/helpers.go** — 핸들러가 쓰는 `Context`(`Emit`로 이벤트 발행), `DecodePayload`, `RequireOperator`, `ChargeDelegationAmount`
+
 **모듈별 핸들러:**
 
 | 모듈 | 핸들러 | 기능 |
@@ -131,7 +133,7 @@ tolchain/
 | 파일 | 설명 |
 |------|------|
 | `peer.go` | TCP 연결. 4바이트 길이 접두사 + JSON. 30초 읽기 데드라인, 32MB 제한 |
-| `node.go` | 피어 관리. 최대 50개. Broadcast, 메시지 핸들러 등록 |
+| `node.go` | 피어 관리. 최대 50개. Broadcast, 메시지 핸들러 등록. RPC로 받은 tx와 피어에게 처음 받은 tx를 다른 피어에 전달 |
 | `sync.go` | 블록 동기화. 최대 200블록 배치. 실패 시 상태 롤백 |
 
 ### 9. `rpc/` (3파일, 330줄) — JSON-RPC 서버

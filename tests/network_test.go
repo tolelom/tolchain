@@ -8,7 +8,10 @@ import (
 	"time"
 
 	"github.com/tolelom/tolchain/core"
+	"github.com/tolelom/tolchain/internal/testutil"
 	"github.com/tolelom/tolchain/network"
+	"github.com/tolelom/tolchain/rpc"
+	"github.com/tolelom/tolchain/wallet"
 )
 
 func TestPeerSendReceive(t *testing.T) {
@@ -97,4 +100,51 @@ func TestNodePeerCount(t *testing.T) {
 	if node.PeerCount() != 1 {
 		t.Errorf("peer count after connect: got %d want 1", node.PeerCount())
 	}
+}
+
+// A tx submitted over RPC to one node must reach nodes it is not directly
+// connected to (a - b - c), or only the receiving node could ever include it.
+func TestTxRelayAcrossPeers(t *testing.T) {
+	newNode := func(id string) (*network.Node, *core.Mempool) {
+		mp := core.NewMempool(100, 3600, 300)
+		n := network.NewNode(id, "127.0.0.1:0", testChainID, mp, nil, 50, 5, 30, 1<<20)
+		if err := n.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(n.Stop)
+		return n, mp
+	}
+	a, aMempool := newNode("a")
+	b, _ := newNode("b")
+	c, cMempool := newNode("c")
+	if err := a.AddPeer("b", b.Listener().Addr().String()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddPeer("b", b.Listener().Addr().String()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for b.PeerCount() < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	handler := rpc.NewHandler(core.NewBlockchain(testutil.NewMemBlockStore()), aMempool, newInMemState(t), nil, testChainID)
+	handler.SetTxRelay(a.BroadcastTx)
+	w, _ := wallet.Generate()
+	tx, err := w.Transfer(testChainID, w.PubKey(), 1, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(tx)
+	if resp := handler.Dispatch(rpc.Request{JSONRPC: "2.0", ID: 1, Method: "sendTx", Params: raw}); resp.Error != nil {
+		t.Fatalf("sendTx: %s", resp.Error.Message)
+	}
+
+	for time.Now().Before(deadline.Add(time.Second)) {
+		if _, ok := cMempool.Get(tx.ID); ok {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("tx did not reach a node two hops away")
 }

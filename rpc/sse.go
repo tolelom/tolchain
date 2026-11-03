@@ -1,7 +1,6 @@
 package rpc
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,14 +13,10 @@ import (
 	"github.com/tolelom/tolchain/events"
 )
 
-// sseEventBufferSize is the default per-client event channel capacity.
-// Slow clients that exceed this buffer will have events dropped.
-const sseEventBufferSize = 64
-
-// maxSSEClients is the maximum number of concurrent SSE connections.
 const maxSSEClients = 100
 
-// SSEBroker manages SSE client connections and broadcasts chain events.
+// SSEBroker streams chain events to SSE clients. A client whose buffer is
+// full misses events rather than slowing block processing.
 type SSEBroker struct {
 	mu           sync.Mutex
 	clients      map[chan events.Event]map[events.EventType]bool // nil filter = all events
@@ -32,8 +27,8 @@ type SSEBroker struct {
 	closeOnce    sync.Once
 }
 
-// NewSSEBroker creates a broker that subscribes to all event types on the emitter.
-// sseBufferSize controls the per-client event channel capacity.
+// NewSSEBroker subscribes to every event type; sseBufferSize is the
+// per-client queue length.
 func NewSSEBroker(emitter *events.Emitter, authToken string, sseBufferSize int) *SSEBroker {
 	b := &SSEBroker{
 		clients:      make(map[chan events.Event]map[events.EventType]bool),
@@ -41,15 +36,13 @@ func NewSSEBroker(emitter *events.Emitter, authToken string, sseBufferSize int) 
 		eventBufSize: sseBufferSize,
 		done:         make(chan struct{}),
 	}
-	for _, t := range events.EventTypeValues() {
-		typ := t
-		emitter.Subscribe(typ, func(ev events.Event) {
-			b.broadcast(ev)
-		})
+	for _, typ := range events.EventTypeValues() {
+		emitter.Subscribe(typ, b.broadcast)
 	}
 	return b
 }
 
+// Close ends every open stream; the server calls it on shutdown.
 func (b *SSEBroker) Close() {
 	b.closeOnce.Do(func() { close(b.done) })
 }
@@ -64,41 +57,29 @@ func (b *SSEBroker) broadcast(ev events.Event) {
 		select {
 		case ch <- ev:
 		default:
-			// slow client — drop event
 		}
 	}
 }
 
-// ServeHTTP handles SSE connections. Query param: ?types=event1,event2
+// ServeHTTP streams events, optionally filtered by ?types=a,b.
 //
-// NOTE: The SSE endpoint does not apply per-request IP rate limiting because
-// SSE connections are long-lived. In production, SSE should be served behind
-// a reverse proxy (e.g. nginx, Caddy) that enforces its own connection-level
-// rate limiting and max-connection policies.
+// There is no per-IP rate limit: streams are long-lived, so connection limits
+// belong to the reverse proxy in front of the node.
 func (b *SSEBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// SSE connections are long-lived; clear the http.Server WriteTimeout for
-	// this response or the server kills the stream after the timeout elapses.
-	// The error is ignored: recorders/proxies that do not support deadlines
-	// simply keep their default behaviour.
-	rc := http.NewResponseController(w)
-	_ = rc.SetWriteDeadline(time.Time{})
+	// Clear the server's WriteTimeout or it would cut the stream. Writers
+	// without deadline support keep their default, hence the ignored error.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 
-	if b.authToken != "" {
-		got := r.Header.Get("Authorization")
-		expected := "Bearer " + b.authToken
-		if subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
+	if !bearerAuthorized(r, b.authToken) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
 	}
 
-	// NOTE: The Load+Add is not atomic; 1-2 extra clients may connect
-	// beyond maxSSEClients under high concurrency. This is acceptable.
-	if b.clientCount.Load() >= maxSSEClients {
+	if b.clientCount.Add(1) > maxSSEClients {
+		b.clientCount.Add(-1)
 		http.Error(w, "too many SSE clients", http.StatusServiceUnavailable)
 		return
 	}
-	b.clientCount.Add(1)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -146,7 +127,9 @@ func (b *SSEBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				slog.Error("SSE marshal event failed", "error", err)
 				continue
 			}
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, data)
+			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, data); err != nil {
+				return
+			}
 			flusher.Flush()
 		}
 	}

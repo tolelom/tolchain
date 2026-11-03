@@ -8,90 +8,105 @@ import (
 	"github.com/tolelom/tolchain/indexer"
 )
 
-// State queries acquire a read lock (BlockRLock) so they never observe
-// partially-applied state during block execution. The write lock is held
-// by consensus/sync during the execute-commit cycle.
-
-// Handler holds all dependencies needed to serve RPC methods.
 type Handler struct {
 	bc      *core.Blockchain
 	mempool *core.Mempool
 	state   core.State
 	indexer *indexer.Indexer
-	chainID string // expected chain_id; used to reject cross-chain replay transactions
+	chainID string
+	methods map[string]func(Request) Response
+	relayTx func(*core.Transaction)
 }
 
-// NewHandler creates an RPC Handler.
 func NewHandler(bc *core.Blockchain, mempool *core.Mempool, state core.State, idx *indexer.Indexer, chainID string) *Handler {
-	return &Handler{bc: bc, mempool: mempool, state: state, indexer: idx, chainID: chainID}
+	h := &Handler{bc: bc, mempool: mempool, state: state, indexer: idx, chainID: chainID}
+	h.methods = map[string]func(Request) Response{
+		"getBlockHeight":          func(req Request) Response { return okResponse(req.ID, h.bc.Height()) },
+		"getBlock":                h.getBlock,
+		"getBalance":              h.getBalance,
+		"getAsset":                h.getAsset,
+		"getSession":              h.getSession,
+		"getListing":              h.getListing,
+		"getAssetsByOwner":        h.getAssetsByOwner,
+		"getTemplate":             h.getTemplate,
+		"getSessionsByPlayer":     h.getSessionsByPlayer,
+		"getTxStatus":             h.getTxStatus,
+		"getActiveListings":       h.getActiveListings,
+		"getInventory":            h.getInventory,
+		"getRandomCommitment":     h.getRandomCommitment,
+		"sendTx":                  h.sendTx,
+		"getMempoolSize":          func(req Request) Response { return okResponse(req.ID, h.mempool.Size()) },
+		"getDelegation":           h.getDelegation,
+		"getDelegationsByGranter": h.getDelegationsByGranter,
+		"getDelegationsByGrantee": h.getDelegationsByGrantee,
+	}
+	return h
 }
 
-// Dispatch routes an RPC request to the correct method.
+// SetTxRelay sets where accepted txs are forwarded so that the next
+// proposer, not just this node, can include them.
+func (h *Handler) SetTxRelay(relay func(*core.Transaction)) {
+	h.relayTx = relay
+}
+
 func (h *Handler) Dispatch(req Request) Response {
-	switch req.Method {
-	case "getBlockHeight":
-		return okResponse(req.ID, h.bc.Height())
-
-	case "getBlock":
-		return h.getBlock(req)
-
-	case "getBalance":
-		return h.getBalance(req)
-
-	case "getAsset":
-		return h.getAsset(req)
-
-	case "getSession":
-		return h.getSession(req)
-
-	case "getListing":
-		return h.getListing(req)
-
-	case "getAssetsByOwner":
-		return h.getAssetsByOwner(req)
-
-	case "getTemplate":
-		return h.getTemplate(req)
-
-	case "getSessionsByPlayer":
-		return h.getSessionsByPlayer(req)
-
-	case "getTxStatus":
-		return h.getTxStatus(req)
-
-	case "getActiveListings":
-		return h.getActiveListings(req)
-
-	case "getInventory":
-		return h.getInventory(req)
-
-	case "getRandomCommitment":
-		return h.getRandomCommitment(req)
-
-	case "sendTx":
-		return h.sendTx(req)
-
-	case "getMempoolSize":
-		return okResponse(req.ID, h.mempool.Size())
-
-	case "getDelegation":
-		return h.getDelegation(req)
-	case "getDelegationsByGranter":
-		return h.getDelegationsByGranter(req)
-	case "getDelegationsByGrantee":
-		return h.getDelegationsByGrantee(req)
-
-	default:
+	method, ok := h.methods[req.Method]
+	if !ok {
 		return errResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("method %q not found", req.Method))
 	}
+	return method(req)
 }
 
+// decodeParams unmarshals req.Params into dst; on failure it returns the
+// error response to send.
+func decodeParams(req Request, dst any) (Response, bool) {
+	if err := json.Unmarshal(req.Params, dst); err != nil {
+		return errResponse(req.ID, CodeInvalidParams, err.Error()), false
+	}
+	return Response{}, true
+}
+
+func missingParam(req Request, msg string) Response {
+	return errResponse(req.ID, CodeInvalidParams, msg)
+}
+
+// readState runs read under the state read lock so it never sees a block that
+// is still being applied.
+func (h *Handler) readState(req Request, read func() (any, error)) Response {
+	h.state.BlockRLock()
+	v, err := read()
+	h.state.BlockRUnlock()
+	if err != nil {
+		return errResponse(req.ID, CodeInternalError, err.Error())
+	}
+	return okResponse(req.ID, v)
+}
+
+// indexList returns the whole list when neither offset nor limit is given,
+// otherwise one page.
+func indexList(req Request, offset, limit int, all func() ([]string, error), page func(offset, limit int) (*indexer.PaginatedResult, error)) Response {
+	var (
+		result any
+		err    error
+	)
+	if limit == 0 && offset == 0 {
+		result, err = all()
+	} else {
+		result, err = page(offset, limit)
+	}
+	if err != nil {
+		return errResponse(req.ID, CodeInternalError, err.Error())
+	}
+	return okResponse(req.ID, result)
+}
+
+// getBlock looks up by hash, else by height, else returns the tip; params are
+// optional.
 func (h *Handler) getBlock(req Request) Response {
 	var params struct {
 		Hash   string `json:"hash"`
 		Height *int64 `json:"height"`
 	}
-	// Allow a paramless call to fall back to the chain tip.
 	if req.Params != nil {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return errResponse(req.ID, CodeInvalidParams, "params: "+err.Error())
@@ -100,11 +115,12 @@ func (h *Handler) getBlock(req Request) Response {
 
 	var block *core.Block
 	var err error
-	if params.Hash != "" {
+	switch {
+	case params.Hash != "":
 		block, err = h.bc.GetBlock(params.Hash)
-	} else if params.Height != nil {
+	case params.Height != nil:
 		block, err = h.bc.GetBlockByHeight(*params.Height)
-	} else {
+	default:
 		block = h.bc.Tip()
 	}
 	if err != nil {
@@ -120,76 +136,65 @@ func (h *Handler) getBalance(req Request) Response {
 	var params struct {
 		Address string `json:"address"`
 	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	if resp, ok := decodeParams(req, &params); !ok {
+		return resp
 	}
 	if params.Address == "" {
-		return errResponse(req.ID, CodeInvalidParams, "address is required")
+		return missingParam(req, "address is required")
 	}
-	h.state.BlockRLock()
-	acc, err := h.state.GetAccount(params.Address)
-	h.state.BlockRUnlock()
-	if err != nil {
-		return errResponse(req.ID, CodeInternalError, err.Error())
+	return h.readState(req, func() (any, error) {
+		acc, err := h.state.GetAccount(params.Address)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"address": params.Address, "balance": acc.Balance, "nonce": acc.Nonce}, nil
+	})
+}
+
+func (h *Handler) getByID(req Request, get func(id string) (any, error)) Response {
+	var params struct {
+		ID string `json:"id"`
 	}
-	return okResponse(req.ID, map[string]any{"address": params.Address, "balance": acc.Balance, "nonce": acc.Nonce})
+	if resp, ok := decodeParams(req, &params); !ok {
+		return resp
+	}
+	if params.ID == "" {
+		return missingParam(req, "id is required")
+	}
+	return h.readState(req, func() (any, error) { return get(params.ID) })
 }
 
 func (h *Handler) getAsset(req Request) Response {
-	var params struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errResponse(req.ID, CodeInvalidParams, err.Error())
-	}
-	if params.ID == "" {
-		return errResponse(req.ID, CodeInvalidParams, "id is required")
-	}
-	h.state.BlockRLock()
-	asset, err := h.state.GetAsset(params.ID)
-	h.state.BlockRUnlock()
-	if err != nil {
-		return errResponse(req.ID, CodeInternalError, err.Error())
-	}
-	return okResponse(req.ID, asset)
+	return h.getByID(req, func(id string) (any, error) { return h.state.GetAsset(id) })
 }
 
 func (h *Handler) getSession(req Request) Response {
-	var params struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errResponse(req.ID, CodeInvalidParams, err.Error())
-	}
-	if params.ID == "" {
-		return errResponse(req.ID, CodeInvalidParams, "id is required")
-	}
-	h.state.BlockRLock()
-	sess, err := h.state.GetSession(params.ID)
-	h.state.BlockRUnlock()
-	if err != nil {
-		return errResponse(req.ID, CodeInternalError, err.Error())
-	}
-	return okResponse(req.ID, sess)
+	return h.getByID(req, func(id string) (any, error) { return h.state.GetSession(id) })
 }
 
 func (h *Handler) getListing(req Request) Response {
+	return h.getByID(req, func(id string) (any, error) { return h.state.GetListing(id) })
+}
+
+func (h *Handler) getTemplate(req Request) Response {
+	return h.getByID(req, func(id string) (any, error) { return h.state.GetTemplate(id) })
+}
+
+func (h *Handler) getRandomCommitment(req Request) Response {
+	return h.getByID(req, func(id string) (any, error) { return h.state.GetRandomCommitment(id) })
+}
+
+func (h *Handler) getInventory(req Request) Response {
 	var params struct {
-		ID string `json:"id"`
+		Owner string `json:"owner"`
 	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	if resp, ok := decodeParams(req, &params); !ok {
+		return resp
 	}
-	if params.ID == "" {
-		return errResponse(req.ID, CodeInvalidParams, "id is required")
+	if params.Owner == "" {
+		return missingParam(req, "owner is required")
 	}
-	h.state.BlockRLock()
-	listing, err := h.state.GetListing(params.ID)
-	h.state.BlockRUnlock()
-	if err != nil {
-		return errResponse(req.ID, CodeInternalError, err.Error())
-	}
-	return okResponse(req.ID, listing)
+	return h.readState(req, func() (any, error) { return h.state.GetInventory(params.Owner) })
 }
 
 func (h *Handler) getAssetsByOwner(req Request) Response {
@@ -198,62 +203,17 @@ func (h *Handler) getAssetsByOwner(req Request) Response {
 		Offset int    `json:"offset"`
 		Limit  int    `json:"limit"`
 	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	if resp, ok := decodeParams(req, &params); !ok {
+		return resp
 	}
 	if params.Owner == "" {
-		return errResponse(req.ID, CodeInvalidParams, "owner is required")
+		return missingParam(req, "owner is required")
 	}
-	if params.Limit == 0 && params.Offset == 0 {
-		ids, err := h.indexer.GetAssetsByOwner(params.Owner)
-		if err != nil {
-			return errResponse(req.ID, CodeInternalError, err.Error())
-		}
-		return okResponse(req.ID, ids)
-	}
-	result, err := h.indexer.GetAssetsByOwnerPaginated(params.Owner, params.Offset, params.Limit)
-	if err != nil {
-		return errResponse(req.ID, CodeInternalError, err.Error())
-	}
-	return okResponse(req.ID, result)
-}
-
-func (h *Handler) sendTx(req Request) Response {
-	var tx core.Transaction
-	if err := json.Unmarshal(req.Params, &tx); err != nil {
-		return errResponse(req.ID, CodeInvalidParams, err.Error())
-	}
-	// Reject transactions destined for a different network to prevent
-	// cross-chain replay attacks.
-	if tx.ChainID != h.chainID {
-		return errResponse(req.ID, CodeInvalidParams,
-			fmt.Sprintf("chain ID mismatch: got %q want %q", tx.ChainID, h.chainID))
-	}
-	// Recompute the ID server-side; do not trust the client-provided value.
-	tx.ID = tx.Hash()
-	if err := h.mempool.Add(&tx); err != nil {
-		return errResponse(req.ID, CodeInternalError, err.Error())
-	}
-	return okResponse(req.ID, map[string]string{"tx_id": tx.ID})
-}
-
-func (h *Handler) getTemplate(req Request) Response {
-	var params struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errResponse(req.ID, CodeInvalidParams, err.Error())
-	}
-	if params.ID == "" {
-		return errResponse(req.ID, CodeInvalidParams, "id is required")
-	}
-	h.state.BlockRLock()
-	tmpl, err := h.state.GetTemplate(params.ID)
-	h.state.BlockRUnlock()
-	if err != nil {
-		return errResponse(req.ID, CodeInternalError, err.Error())
-	}
-	return okResponse(req.ID, tmpl)
+	return indexList(req, params.Offset, params.Limit,
+		func() ([]string, error) { return h.indexer.GetAssetsByOwner(params.Owner) },
+		func(o, l int) (*indexer.PaginatedResult, error) {
+			return h.indexer.GetAssetsByOwnerPaginated(params.Owner, o, l)
+		})
 }
 
 func (h *Handler) getSessionsByPlayer(req Request) Response {
@@ -262,35 +222,40 @@ func (h *Handler) getSessionsByPlayer(req Request) Response {
 		Offset int    `json:"offset"`
 		Limit  int    `json:"limit"`
 	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	if resp, ok := decodeParams(req, &params); !ok {
+		return resp
 	}
 	if params.Player == "" {
-		return errResponse(req.ID, CodeInvalidParams, "player is required")
+		return missingParam(req, "player is required")
 	}
-	if params.Limit == 0 && params.Offset == 0 {
-		ids, err := h.indexer.GetSessionsByPlayer(params.Player)
-		if err != nil {
-			return errResponse(req.ID, CodeInternalError, err.Error())
-		}
-		return okResponse(req.ID, ids)
+	return indexList(req, params.Offset, params.Limit,
+		func() ([]string, error) { return h.indexer.GetSessionsByPlayer(params.Player) },
+		func(o, l int) (*indexer.PaginatedResult, error) {
+			return h.indexer.GetSessionsByPlayerPaginated(params.Player, o, l)
+		})
+}
+
+// getActiveListings ignores malformed params and treats them as absent.
+func (h *Handler) getActiveListings(req Request) Response {
+	var params struct {
+		Offset int `json:"offset"`
+		Limit  int `json:"limit"`
 	}
-	result, err := h.indexer.GetSessionsByPlayerPaginated(params.Player, params.Offset, params.Limit)
-	if err != nil {
-		return errResponse(req.ID, CodeInternalError, err.Error())
+	if req.Params != nil {
+		_ = json.Unmarshal(req.Params, &params)
 	}
-	return okResponse(req.ID, result)
+	return indexList(req, params.Offset, params.Limit, h.indexer.GetActiveListings, h.indexer.GetActiveListingsPaginated)
 }
 
 func (h *Handler) getTxStatus(req Request) Response {
 	var params struct {
 		TxID string `json:"tx_id"`
 	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	if resp, ok := decodeParams(req, &params); !ok {
+		return resp
 	}
 	if params.TxID == "" {
-		return errResponse(req.ID, CodeInvalidParams, "tx_id is required")
+		return missingParam(req, "tx_id is required")
 	}
 	result, err := h.indexer.GetTxResult(params.TxID)
 	if err != nil {
@@ -299,65 +264,23 @@ func (h *Handler) getTxStatus(req Request) Response {
 	return okResponse(req.ID, result)
 }
 
-func (h *Handler) getActiveListings(req Request) Response {
-	var params struct {
-		Offset int `json:"offset"`
-		Limit  int `json:"limit"`
+func (h *Handler) sendTx(req Request) Response {
+	var tx core.Transaction
+	if resp, ok := decodeParams(req, &tx); !ok {
+		return resp
 	}
-	// Allow no-params call for backward compat.
-	if req.Params != nil {
-		_ = json.Unmarshal(req.Params, &params)
+	if tx.ChainID != h.chainID {
+		return errResponse(req.ID, CodeInvalidParams,
+			fmt.Sprintf("chain ID mismatch: got %q want %q", tx.ChainID, h.chainID))
 	}
-	if params.Limit == 0 && params.Offset == 0 {
-		ids, err := h.indexer.GetActiveListings()
-		if err != nil {
-			return errResponse(req.ID, CodeInternalError, err.Error())
-		}
-		return okResponse(req.ID, ids)
-	}
-	result, err := h.indexer.GetActiveListingsPaginated(params.Offset, params.Limit)
-	if err != nil {
+	tx.ID = tx.Hash()
+	if err := h.mempool.Add(&tx); err != nil {
 		return errResponse(req.ID, CodeInternalError, err.Error())
 	}
-	return okResponse(req.ID, result)
-}
-
-func (h *Handler) getInventory(req Request) Response {
-	var params struct {
-		Owner string `json:"owner"`
+	if h.relayTx != nil {
+		h.relayTx(&tx)
 	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errResponse(req.ID, CodeInvalidParams, err.Error())
-	}
-	if params.Owner == "" {
-		return errResponse(req.ID, CodeInvalidParams, "owner is required")
-	}
-	h.state.BlockRLock()
-	inv, err := h.state.GetInventory(params.Owner)
-	h.state.BlockRUnlock()
-	if err != nil {
-		return errResponse(req.ID, CodeInternalError, err.Error())
-	}
-	return okResponse(req.ID, inv)
-}
-
-func (h *Handler) getRandomCommitment(req Request) Response {
-	var params struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errResponse(req.ID, CodeInvalidParams, err.Error())
-	}
-	if params.ID == "" {
-		return errResponse(req.ID, CodeInvalidParams, "id is required")
-	}
-	h.state.BlockRLock()
-	rc, err := h.state.GetRandomCommitment(params.ID)
-	h.state.BlockRUnlock()
-	if err != nil {
-		return errResponse(req.ID, CodeInternalError, err.Error())
-	}
-	return okResponse(req.ID, rc)
+	return okResponse(req.ID, map[string]string{"tx_id": tx.ID})
 }
 
 func (h *Handler) getDelegation(req Request) Response {
@@ -365,55 +288,37 @@ func (h *Handler) getDelegation(req Request) Response {
 		Granter string `json:"granter"`
 		Grantee string `json:"grantee"`
 	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	if resp, ok := decodeParams(req, &params); !ok {
+		return resp
 	}
 	if params.Granter == "" || params.Grantee == "" {
-		return errResponse(req.ID, CodeInvalidParams, "granter and grantee are required")
+		return missingParam(req, "granter and grantee are required")
 	}
-	h.state.BlockRLock()
-	grant, err := h.state.GetDelegation(params.Granter, params.Grantee)
-	h.state.BlockRUnlock()
-	if err != nil {
-		return errResponse(req.ID, CodeInternalError, err.Error())
-	}
-	return okResponse(req.ID, grant)
+	return h.readState(req, func() (any, error) { return h.state.GetDelegation(params.Granter, params.Grantee) })
 }
 
 func (h *Handler) getDelegationsByGranter(req Request) Response {
 	var params struct {
 		Granter string `json:"granter"`
 	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	if resp, ok := decodeParams(req, &params); !ok {
+		return resp
 	}
 	if params.Granter == "" {
-		return errResponse(req.ID, CodeInvalidParams, "granter is required")
+		return missingParam(req, "granter is required")
 	}
-	h.state.BlockRLock()
-	grants, err := h.state.GetDelegationsByGranter(params.Granter)
-	h.state.BlockRUnlock()
-	if err != nil {
-		return errResponse(req.ID, CodeInternalError, err.Error())
-	}
-	return okResponse(req.ID, grants)
+	return h.readState(req, func() (any, error) { return h.state.GetDelegationsByGranter(params.Granter) })
 }
 
 func (h *Handler) getDelegationsByGrantee(req Request) Response {
 	var params struct {
 		Grantee string `json:"grantee"`
 	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errResponse(req.ID, CodeInvalidParams, err.Error())
+	if resp, ok := decodeParams(req, &params); !ok {
+		return resp
 	}
 	if params.Grantee == "" {
-		return errResponse(req.ID, CodeInvalidParams, "grantee is required")
+		return missingParam(req, "grantee is required")
 	}
-	h.state.BlockRLock()
-	grants, err := h.state.GetDelegationsByGrantee(params.Grantee)
-	h.state.BlockRUnlock()
-	if err != nil {
-		return errResponse(req.ID, CodeInternalError, err.Error())
-	}
-	return okResponse(req.ID, grants)
+	return h.readState(req, func() (any, error) { return h.state.GetDelegationsByGrantee(params.Grantee) })
 }

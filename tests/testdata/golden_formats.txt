@@ -1,0 +1,11 @@
+tx id=142601ce4a1df4ae5cbd146f9cfd22c0edb4582faabcf01ef1d9180b557b6342 sig=f66160713b7e3fdf5a5b612c87b2d728843c1e076e2e763cdcbec33b274c0ad98db99728cb37670dde6d49d41718f7b0613b7b1a69075c538fc62a7a595b1f0b
+tx json={"id":"142601ce4a1df4ae5cbd146f9cfd22c0edb4582faabcf01ef1d9180b557b6342","chain_id":"c","type":"transfer","from":"fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618","nonce":3,"fee":2,"timestamp":42,"payload":{"to":"t","amount":1},"signature":"f66160713b7e3fdf5a5b612c87b2d728843c1e076e2e763cdcbec33b274c0ad98db99728cb37670dde6d49d41718f7b0613b7b1a69075c538fc62a7a595b1f0b"}
+delegated tx id=eacb302b2ea7e58fd51699ae59cc1fb21d407a0cee9045efbaf961f4f61ea9f4
+empty tx_root=2e1cfa82b035c26cbbbdae632cea070514eb8b773f616aaeaf668e2f0be8f10d
+consent=session-consent:v2:12:tolchain-dev:6:sess:1:4:game:100
+address=dbc298251c51321b7266e78d1c151c2b62aff8cb
+state prefixes=[acct: asset: tmpl: sess: list: inv: rcom: deleg:]
+config={"node_id":"node0","data_dir":"./data","rpc_port":8545,"p2p_port":30303,"max_block_txs":500,"validators":["fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618"],"genesis":{"chain_id":"tolchain-dev","alloc":{},"timestamp":1735689600000000000},"seed_peers":[{"id":"n1","addr":"h:1"}],"tls":{"ca_cert":"","node_cert":"","node_key":""},"log_level":"info","mempool":{"max_size":10000,"max_tx_age_sec":3600,"max_future_sec":300},"network":{"max_peers":50,"write_timeout_sec":30,"read_timeout_sec":300,"max_message_size":10485760,"sync_batch_size":50,"max_sync_batch_size":200},"rpc":{"rate_limit":100,"rate_burst":200,"read_timeout_sec":30,"write_timeout_sec":30,"idle_timeout_sec":60,"max_body_size":1048576,"sse_buffer_size":64},"consensus":{"block_interval_sec":2,"max_time_drift_sec":15}}
+p2p network.Message={"type":"get_blocks","payload":{"from_height":1,"limit":2}}
+p2p network.GetBlocksRequest={"from_height":1,"limit":2}
+p2p network.BlocksResponse={"blocks":[]}

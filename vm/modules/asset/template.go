@@ -11,21 +11,18 @@ import (
 )
 
 func handleRegisterTemplate(ctx *vm.Context, payload json.RawMessage) error {
-	var p core.RegisterTemplatePayload
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return fmt.Errorf("decode register_template payload: %w", err)
+	p, err := vm.DecodePayload[core.RegisterTemplatePayload](payload, core.TxRegisterTemplate)
+	if err != nil {
+		return err
 	}
 	if p.ID == "" {
 		return errors.New("template id required")
 	}
-
-	// Operator restriction: only authorised operators can register templates.
 	if err := vm.RequireOperator(ctx); err != nil {
 		return err
 	}
 
-	// Prevent overwriting an existing template
-	_, err := ctx.State.GetTemplate(p.ID)
+	_, err = ctx.State.GetTemplate(p.ID)
 	if err == nil {
 		return fmt.Errorf("template %q already exists: %w", p.ID, core.ErrAlreadyExists)
 	}
@@ -44,13 +41,6 @@ func handleRegisterTemplate(ctx *vm.Context, payload json.RawMessage) error {
 		return err
 	}
 
-	if ctx.Emitter != nil {
-		ctx.Emitter.Emit(events.Event{
-			Type:        events.EventTemplateRegistered,
-			TxID:        ctx.Tx.ID,
-			BlockHeight: ctx.Block.Header.Height,
-			Data:        events.TemplateRegisteredData{TemplateID: p.ID, Name: p.Name}.Map(),
-		})
-	}
+	ctx.Emit(events.EventTemplateRegistered, events.TemplateRegisteredData{TemplateID: p.ID, Name: p.Name})
 	return nil
 }

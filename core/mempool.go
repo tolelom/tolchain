@@ -10,22 +10,19 @@ import (
 	"github.com/tolelom/tolchain/metrics"
 )
 
-
-// Mempool is a thread-safe pending-transaction pool.
+// Mempool holds verified txs waiting for a block.
 type Mempool struct {
 	mu        sync.RWMutex
 	txs       map[string]*Transaction
-	ord       []string                     // insertion-ordered IDs for deterministic pending iteration
-	nonces    map[string]map[uint64]string // sender → nonce → tx ID (prevents duplicate nonces)
+	ord       []string                     // IDs in arrival order
+	nonces    map[string]map[uint64]string // NonceAccount → nonce → tx ID
 	maxSize   int
-	maxTxAge  int64         // nanoseconds
-	maxFuture int64         // nanoseconds
+	maxTxAge  int64 // ns
+	maxFuture int64 // ns
 }
 
-// NewMempool creates an empty mempool with the given limits.
-// maxSize is the maximum number of transactions in the pool.
-// maxTxAgeSec is the maximum past timestamp drift in seconds.
-// maxFutureSec is the maximum future timestamp drift in seconds.
+// NewMempool bounds the pool size and how far a tx timestamp may lie in the
+// past or future.
 func NewMempool(maxSize int, maxTxAgeSec int, maxFutureSec int) *Mempool {
 	return &Mempool{
 		txs:       make(map[string]*Transaction),
@@ -36,19 +33,17 @@ func NewMempool(maxSize int, maxTxAgeSec int, maxFutureSec int) *Mempool {
 	}
 }
 
-// Add validates and inserts a transaction. Returns an error if the pool is
-// full, the tx is already present, the signature is invalid, or the timestamp
-// is out of the acceptable window (±1 h / +5 min).
+// Add rejects a tx that fails verification, is outside the timestamp window,
+// is already pooled, reuses a pooled nonce of its account, or finds the pool
+// full.
 func (m *Mempool) Add(tx *Transaction) error {
-	// Signature verification runs outside the lock for performance.
-	// Concurrent duplicate submissions may verify twice, but the
-	// dedup check under the lock prevents double-insertion.
+	// Verified before taking the lock; duplicates are caught under it.
 	if err := tx.Verify(); err != nil {
 		metrics.MempoolRejected.WithLabelValues("invalid_sig").Inc()
 		return fmt.Errorf("invalid tx signature: %w", err)
 	}
 	now := time.Now().UnixNano()
-	if now > tx.Timestamp && now-tx.Timestamp > m.maxTxAge {
+	if m.expired(tx, now) {
 		metrics.MempoolRejected.WithLabelValues("expired").Inc()
 		return errors.New("transaction expired")
 	}
@@ -66,25 +61,26 @@ func (m *Mempool) Add(tx *Transaction) error {
 		metrics.MempoolRejected.WithLabelValues("duplicate").Inc()
 		return fmt.Errorf("tx already in pool: %w", ErrAlreadyExists)
 	}
-	// Reject duplicate nonce from the same sender.
-	if senderNonces, ok := m.nonces[tx.From]; ok {
-		if _, dup := senderNonces[tx.Nonce]; dup {
-			metrics.MempoolRejected.WithLabelValues("dup_nonce").Inc()
-			return fmt.Errorf("duplicate nonce %d from sender %s", tx.Nonce, tx.From)
-		}
+	account := tx.NonceAccount()
+	if _, dup := m.nonces[account][tx.Nonce]; dup {
+		metrics.MempoolRejected.WithLabelValues("dup_nonce").Inc()
+		return fmt.Errorf("duplicate nonce %d from sender %s", tx.Nonce, account)
 	}
 	m.txs[tx.ID] = tx
 	m.ord = append(m.ord, tx.ID)
-	if m.nonces[tx.From] == nil {
-		m.nonces[tx.From] = make(map[uint64]string)
+	if m.nonces[account] == nil {
+		m.nonces[account] = make(map[uint64]string)
 	}
-	m.nonces[tx.From][tx.Nonce] = tx.ID
+	m.nonces[account][tx.Nonce] = tx.ID
 	metrics.MempoolAdded.Inc()
 	metrics.MempoolSize.Set(float64(len(m.txs)))
 	return nil
 }
 
-// Get returns a transaction by ID.
+func (m *Mempool) expired(tx *Transaction, now int64) bool {
+	return now > tx.Timestamp && now-tx.Timestamp > m.maxTxAge
+}
+
 func (m *Mempool) Get(id string) (*Transaction, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -92,16 +88,15 @@ func (m *Mempool) Get(id string) (*Transaction, bool) {
 	return tx, ok
 }
 
+// Pending returns up to n unexpired txs in arrival order, except that each
+// account's txs are reordered by nonce among the positions they occupy.
 func (m *Mempool) Pending(n int) []*Transaction {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	now := time.Now().UnixNano()
 	live := make([]*Transaction, 0, len(m.ord))
 	for _, id := range m.ord {
-		if tx, ok := m.txs[id]; ok {
-			if now > tx.Timestamp && now-tx.Timestamp > m.maxTxAge {
-				continue
-			}
+		if tx, ok := m.txs[id]; ok && !m.expired(tx, now) {
 			live = append(live, tx)
 		}
 	}
@@ -130,6 +125,7 @@ func sortEachAccountByNonce(txs []*Transaction) {
 	}
 }
 
+// NonceAccount is the account whose nonce and fee the tx spends.
 func (tx *Transaction) NonceAccount() string {
 	if tx.OnBehalfOf != "" {
 		return tx.OnBehalfOf
@@ -137,15 +133,13 @@ func (tx *Transaction) NonceAccount() string {
 	return tx.From
 }
 
-// EvictExpired removes transactions whose timestamp is older than the
-// configured maxTxAge and returns the number evicted. Call periodically
-// from the consensus loop so the pool does not accumulate dead entries.
+// EvictExpired drops expired txs and returns how many were dropped.
 func (m *Mempool) EvictExpired() int {
 	m.mu.RLock()
 	now := time.Now().UnixNano()
 	var expired []string
 	for id, tx := range m.txs {
-		if now > tx.Timestamp && now-tx.Timestamp > m.maxTxAge {
+		if m.expired(tx, now) {
 			expired = append(expired, id)
 		}
 	}
@@ -157,7 +151,6 @@ func (m *Mempool) EvictExpired() int {
 	return len(expired)
 }
 
-// Remove deletes transactions by ID (called after block commit).
 func (m *Mempool) Remove(ids []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -165,11 +158,11 @@ func (m *Mempool) Remove(ids []string) {
 	actualRemoved := 0
 	for _, id := range ids {
 		if tx, ok := m.txs[id]; ok {
-			// Clean up nonce tracking.
-			if senderNonces, exists := m.nonces[tx.From]; exists {
-				delete(senderNonces, tx.Nonce)
-				if len(senderNonces) == 0 {
-					delete(m.nonces, tx.From)
+			account := tx.NonceAccount()
+			if accountNonces, exists := m.nonces[account]; exists {
+				delete(accountNonces, tx.Nonce)
+				if len(accountNonces) == 0 {
+					delete(m.nonces, account)
 				}
 			}
 			delete(m.txs, id)
@@ -184,7 +177,7 @@ func (m *Mempool) Remove(ids []string) {
 		}
 	}
 	m.ord = filtered
-	// Compact if capacity is more than 2x the length (prevent unbounded growth)
+	// Reallocate so a once-full pool does not pin its peak capacity.
 	if cap(m.ord) > 2*len(m.ord)+64 {
 		compacted := make([]string, len(m.ord))
 		copy(compacted, m.ord)
@@ -194,7 +187,6 @@ func (m *Mempool) Remove(ids []string) {
 	metrics.MempoolSize.Set(float64(len(m.txs)))
 }
 
-// Size returns the current number of pending transactions.
 func (m *Mempool) Size() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

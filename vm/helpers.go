@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 
@@ -8,7 +9,15 @@ import (
 	"github.com/tolelom/tolchain/crypto"
 )
 
-// SafeAdd returns a + b, or an error if the result would overflow uint64.
+func DecodePayload[T any](payload json.RawMessage, typ core.TxType) (*T, error) {
+	var p T
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return nil, fmt.Errorf("decode %s payload: %w", typ, err)
+	}
+	return &p, nil
+}
+
+// SafeAdd returns a + b, or core.ErrBalanceOverflow.
 func SafeAdd(a, b uint64) (uint64, error) {
 	if a > math.MaxUint64-b {
 		return 0, core.ErrBalanceOverflow
@@ -16,9 +25,8 @@ func SafeAdd(a, b uint64) (uint64, error) {
 	return a + b, nil
 }
 
-// RequireOperator returns an error if operators are configured and the
-// transaction sender is not among them. When no operators are configured
-// (nil or empty map), all senders are permitted.
+// RequireOperator rejects a sender outside the configured operator set. With
+// no operators configured every sender passes.
 func RequireOperator(ctx *Context) error {
 	if len(ctx.Operators) == 0 {
 		return nil
@@ -29,7 +37,6 @@ func RequireOperator(ctx *Context) error {
 	return nil
 }
 
-// ValidatePubKey checks that hexStr is a valid ed25519 public key hex string.
 func ValidatePubKey(hexStr, fieldName string) error {
 	if hexStr == "" {
 		return fmt.Errorf("%s is required", fieldName)
@@ -40,16 +47,10 @@ func ValidatePubKey(hexStr, fieldName string) error {
 	return nil
 }
 
-// ChargeDelegationAmount enforces the MaxAmount limit on a delegation grant
-// for tx that move tokens (transfer, grant_reward). Caller passes the amount
-// the tx wants to spend on behalf of the granter; this updates SpentAmount
-// in state and rejects if MaxAmount would be exceeded.
-//
-// No-op when tx is direct (OnBehalfOf == ""), grant has MaxAmount == 0
-// (unlimited), or amount == 0.
-//
-// Must be called from inside a tx handler so failures roll back via the
-// executor's per-tx snapshot.
+// ChargeDelegationAmount counts amount against the delegation's MaxAmount when
+// the tx is delegated, and fails once the limit would be exceeded. Handlers
+// call it before moving the granter's tokens, so a failure rolls back with the
+// tx. MaxAmount 0 means unlimited.
 func ChargeDelegationAmount(ctx *Context, amount uint64) error {
 	if amount == 0 || ctx.Tx.OnBehalfOf == "" {
 		return nil
