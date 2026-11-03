@@ -15,7 +15,7 @@ type Mempool struct {
 	mu        sync.RWMutex
 	txs       map[string]*Transaction
 	ord       []string                     // insertion-ordered IDs for deterministic pending iteration
-	nonces    map[string]map[uint64]string // sender → nonce → tx ID (prevents duplicate nonces)
+	nonces    map[string]map[uint64]string // NonceAccount → nonce → tx ID
 	maxSize   int
 	maxTxAge  int64 // nanoseconds
 	maxFuture int64 // nanoseconds
@@ -65,19 +65,17 @@ func (m *Mempool) Add(tx *Transaction) error {
 		metrics.MempoolRejected.WithLabelValues("duplicate").Inc()
 		return fmt.Errorf("tx already in pool: %w", ErrAlreadyExists)
 	}
-	// Reject duplicate nonce from the same sender.
-	if senderNonces, ok := m.nonces[tx.From]; ok {
-		if _, dup := senderNonces[tx.Nonce]; dup {
-			metrics.MempoolRejected.WithLabelValues("dup_nonce").Inc()
-			return fmt.Errorf("duplicate nonce %d from sender %s", tx.Nonce, tx.From)
-		}
+	account := tx.NonceAccount()
+	if _, dup := m.nonces[account][tx.Nonce]; dup {
+		metrics.MempoolRejected.WithLabelValues("dup_nonce").Inc()
+		return fmt.Errorf("duplicate nonce %d from sender %s", tx.Nonce, account)
 	}
 	m.txs[tx.ID] = tx
 	m.ord = append(m.ord, tx.ID)
-	if m.nonces[tx.From] == nil {
-		m.nonces[tx.From] = make(map[uint64]string)
+	if m.nonces[account] == nil {
+		m.nonces[account] = make(map[uint64]string)
 	}
-	m.nonces[tx.From][tx.Nonce] = tx.ID
+	m.nonces[account][tx.Nonce] = tx.ID
 	metrics.MempoolAdded.Inc()
 	metrics.MempoolSize.Set(float64(len(m.txs)))
 	return nil
@@ -164,11 +162,11 @@ func (m *Mempool) Remove(ids []string) {
 	actualRemoved := 0
 	for _, id := range ids {
 		if tx, ok := m.txs[id]; ok {
-			// Clean up nonce tracking.
-			if senderNonces, exists := m.nonces[tx.From]; exists {
-				delete(senderNonces, tx.Nonce)
-				if len(senderNonces) == 0 {
-					delete(m.nonces, tx.From)
+			account := tx.NonceAccount()
+			if accountNonces, exists := m.nonces[account]; exists {
+				delete(accountNonces, tx.Nonce)
+				if len(accountNonces) == 0 {
+					delete(m.nonces, account)
 				}
 			}
 			delete(m.txs, id)

@@ -168,3 +168,56 @@ func TestMempool_Remove_FreesNonce(t *testing.T) {
 		t.Fatalf("expected nonce to be freed after remove: %v", err)
 	}
 }
+
+func newDelegatedTx(t *testing.T, signer crypto.PrivateKey, onBehalfOf string, nonce uint64) *Transaction {
+	t.Helper()
+	from := signer.Public().Hex()
+	tx, err := NewTransaction("test", TxTransfer, from, nonce, 0, TransferPayload{To: from, Amount: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.OnBehalfOf = onBehalfOf
+	tx.Sign(signer)
+	return tx
+}
+
+// A custodial grantee signs for many granters; each granter has its own nonce
+// sequence, so the same nonce for different granters is not a duplicate.
+func TestMempool_DelegatedNonceIsPerGranter(t *testing.T) {
+	mp := NewMempool(100, 3600, 300)
+	grantee, _, _ := crypto.GenerateKeyPair()
+	_, granterA, _ := crypto.GenerateKeyPair()
+	_, granterB, _ := crypto.GenerateKeyPair()
+
+	if err := mp.Add(newDelegatedTx(t, grantee, granterA.Hex(), 0)); err != nil {
+		t.Fatalf("first delegated tx: %v", err)
+	}
+	if err := mp.Add(newDelegatedTx(t, grantee, granterB.Hex(), 0)); err != nil {
+		t.Fatalf("same nonce for a different granter must be accepted: %v", err)
+	}
+}
+
+// A delegated tx spends the granter's nonce, so it collides with the granter's
+// own tx at the same nonce.
+func TestMempool_DelegatedNonceCollidesWithGranter(t *testing.T) {
+	mp := NewMempool(100, 3600, 300)
+	grantee, _, _ := crypto.GenerateKeyPair()
+	granter, granterPub, _ := crypto.GenerateKeyPair()
+
+	own, err := NewTransaction("test", TxTransfer, granterPub.Hex(), 0, 0, TransferPayload{To: granterPub.Hex(), Amount: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	own.Sign(granter)
+	if err := mp.Add(own); err != nil {
+		t.Fatal(err)
+	}
+	delegated := newDelegatedTx(t, grantee, granterPub.Hex(), 0)
+	if err := mp.Add(delegated); err == nil {
+		t.Fatal("delegated tx reusing the granter's pending nonce must be rejected")
+	}
+	mp.Remove([]string{own.ID})
+	if err := mp.Add(delegated); err != nil {
+		t.Fatalf("nonce must be free after the granter's tx is removed: %v", err)
+	}
+}
