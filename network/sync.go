@@ -8,7 +8,6 @@ import (
 	"github.com/tolelom/tolchain/events"
 )
 
-
 // GetBlocksRequest asks a peer for blocks starting at FromHeight.
 type GetBlocksRequest struct {
 	FromHeight int64 `json:"from_height"`

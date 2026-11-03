@@ -13,7 +13,7 @@ type Account struct {
 type Asset struct {
 	ID              string         `json:"id"`
 	TemplateID      string         `json:"template_id"`
-	Owner           string         `json:"owner"`             // pubkey hex
+	Owner           string         `json:"owner"` // pubkey hex
 	Properties      map[string]any `json:"properties"`
 	Tradeable       bool           `json:"tradeable"`
 	MintedAt        int64          `json:"minted_at"`
@@ -33,11 +33,11 @@ type AssetTemplate struct {
 type Session struct {
 	ID        string            `json:"id"`
 	GameID    string            `json:"game_id"`
-	Creator   string            `json:"creator"`  // pubkey hex of the session opener
-	Players   []string          `json:"players"`  // pubkey hexes
-	Stakes    uint64            `json:"stakes"`   // tokens locked per player
-	Status    string            `json:"status"`   // "open" | "closed"
-	Outcome   map[string]uint64 `json:"outcome"`  // pubkey hex → reward
+	Creator   string            `json:"creator"` // pubkey hex of the session opener
+	Players   []string          `json:"players"` // pubkey hexes
+	Stakes    uint64            `json:"stakes"`  // tokens locked per player
+	Status    string            `json:"status"`  // "open" | "closed"
+	Outcome   map[string]uint64 `json:"outcome"` // pubkey hex → reward
 	CreatedAt int64             `json:"created_at"`
 	ClosedAt  int64             `json:"closed_at"`
 }
@@ -46,7 +46,7 @@ type Session struct {
 type MarketListing struct {
 	ID        string `json:"id"`
 	AssetID   string `json:"asset_id"`
-	Seller    string `json:"seller"`     // pubkey hex
+	Seller    string `json:"seller"` // pubkey hex
 	Price     uint64 `json:"price"`
 	Active    bool   `json:"active"`
 	CreatedAt int64  `json:"created_at"`

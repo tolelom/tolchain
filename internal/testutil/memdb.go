@@ -109,11 +109,11 @@ type memIter struct {
 	idx   int
 }
 
-func (it *memIter) Next() bool        { it.idx++; return it.idx < len(it.pairs) }
-func (it *memIter) Key() []byte       { return it.pairs[it.idx].k }
-func (it *memIter) Value() []byte     { return it.pairs[it.idx].v }
-func (it *memIter) Release()          {}
-func (it *memIter) Error() error      { return nil }
+func (it *memIter) Next() bool    { it.idx++; return it.idx < len(it.pairs) }
+func (it *memIter) Key() []byte   { return it.pairs[it.idx].k }
+func (it *memIter) Value() []byte { return it.pairs[it.idx].v }
+func (it *memIter) Release()      {}
+func (it *memIter) Error() error  { return nil }
 
 // MemBlockStore is an in-memory core.BlockStore for tests.
 type MemBlockStore struct {

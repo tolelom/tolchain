@@ -902,4 +902,3 @@ func TestSessionCancel_NilEmitter(t *testing.T) {
 		t.Fatalf("expected success with nil emitter: %v", err)
 	}
 }
-

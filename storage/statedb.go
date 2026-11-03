@@ -27,10 +27,10 @@ func registerPrefix(p string) string {
 var statePrefixes []string
 
 var (
-	prefixAccount  = registerPrefix("acct:")
-	prefixAsset    = registerPrefix("asset:")
-	prefixTemplate = registerPrefix("tmpl:")
-	prefixSession  = registerPrefix("sess:")
+	prefixAccount      = registerPrefix("acct:")
+	prefixAsset        = registerPrefix("asset:")
+	prefixTemplate     = registerPrefix("tmpl:")
+	prefixSession      = registerPrefix("sess:")
 	prefixListing      = registerPrefix("list:")
 	prefixInventory    = registerPrefix("inv:")
 	prefixRandomCommit = registerPrefix("rcom:")
@@ -440,7 +440,7 @@ func (s *StateDB) GetDelegationsByGrantee(grantee string) ([]*core.DelegationGra
 // BlockRLock acquires the block-execution read lock. Multiple RPC queries
 // can hold this concurrently, but they will block while a block is being
 // executed (write lock held).
-func (s *StateDB) BlockRLock()   { s.blockMu.RLock() }
+func (s *StateDB) BlockRLock() { s.blockMu.RLock() }
 
 // BlockRUnlock releases the block-execution read lock.
 func (s *StateDB) BlockRUnlock() { s.blockMu.RUnlock() }
@@ -448,7 +448,7 @@ func (s *StateDB) BlockRUnlock() { s.blockMu.RUnlock() }
 // BlockLock acquires the exclusive block-execution write lock. This must be
 // held during the entire Snapshot → ExecuteTx → ComputeRoot → Commit cycle
 // so that RPC queries never observe partially-applied state.
-func (s *StateDB) BlockLock()   { s.blockMu.Lock() }
+func (s *StateDB) BlockLock() { s.blockMu.Lock() }
 
 // BlockUnlock releases the exclusive block-execution write lock.
 func (s *StateDB) BlockUnlock() { s.blockMu.Unlock() }

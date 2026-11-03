@@ -16,26 +16,26 @@ import (
 // ChainID prevents replay of this transaction on a different network.
 // Signature covers all fields except Signature itself.
 type Transaction struct {
-	ID        string          `json:"id"`
-	ChainID   string          `json:"chain_id"` // must match the receiving node's chain ID
-	Type      TxType          `json:"type"`
-	From      string          `json:"from"`      // hex-encoded ed25519 public key
-	Nonce     uint64          `json:"nonce"`
-	Fee       uint64          `json:"fee"`
-	Timestamp int64           `json:"timestamp"`
-	Payload   json.RawMessage `json:"payload"`
+	ID         string          `json:"id"`
+	ChainID    string          `json:"chain_id"` // must match the receiving node's chain ID
+	Type       TxType          `json:"type"`
+	From       string          `json:"from"` // hex-encoded ed25519 public key
+	Nonce      uint64          `json:"nonce"`
+	Fee        uint64          `json:"fee"`
+	Timestamp  int64           `json:"timestamp"`
+	Payload    json.RawMessage `json:"payload"`
 	Signature  string          `json:"signature"`
 	OnBehalfOf string          `json:"on_behalf_of,omitempty"`
 }
 
 // signingBody holds the fields that are covered by the signature.
 type signingBody struct {
-	ChainID   string          `json:"chain_id"`
-	Type      TxType          `json:"type"`
-	From      string          `json:"from"`
-	Nonce     uint64          `json:"nonce"`
-	Fee       uint64          `json:"fee"`
-	Timestamp int64           `json:"timestamp"`
+	ChainID    string          `json:"chain_id"`
+	Type       TxType          `json:"type"`
+	From       string          `json:"from"`
+	Nonce      uint64          `json:"nonce"`
+	Fee        uint64          `json:"fee"`
+	Timestamp  int64           `json:"timestamp"`
 	Payload    json.RawMessage `json:"payload"`
 	OnBehalfOf string          `json:"on_behalf_of,omitempty"`
 }
@@ -115,7 +115,7 @@ type TransferPayload struct {
 // MintAssetPayload mints a new asset from a registered template.
 type MintAssetPayload struct {
 	TemplateID string         `json:"template_id"`
-	Owner      string         `json:"owner"`       // recipient pubkey hex
+	Owner      string         `json:"owner"` // recipient pubkey hex
 	Properties map[string]any `json:"properties"`
 }
 
@@ -134,7 +134,7 @@ type TransferAssetPayload struct {
 type RegisterTemplatePayload struct {
 	ID        string         `json:"id"`
 	Name      string         `json:"name"`
-	Schema    map[string]any `json:"schema"`    // allowed property keys → type hints
+	Schema    map[string]any `json:"schema"` // allowed property keys → type hints
 	Tradeable bool           `json:"tradeable"`
 }
 
@@ -190,8 +190,8 @@ type UnequipItemPayload struct {
 
 // GrantRewardPayload atomically grants tokens and mints assets. Operator-only.
 type GrantRewardPayload struct {
-	Recipient   string           `json:"recipient"`
-	TokenAmount uint64           `json:"token_amount"`
+	Recipient   string             `json:"recipient"`
+	TokenAmount uint64             `json:"token_amount"`
 	Assets      []MintAssetPayload `json:"assets"`
 }
 

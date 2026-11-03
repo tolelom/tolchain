@@ -10,7 +10,6 @@ import (
 	"github.com/tolelom/tolchain/metrics"
 )
 
-
 // Mempool is a thread-safe pending-transaction pool.
 type Mempool struct {
 	mu        sync.RWMutex
@@ -18,8 +17,8 @@ type Mempool struct {
 	ord       []string                     // insertion-ordered IDs for deterministic pending iteration
 	nonces    map[string]map[uint64]string // sender → nonce → tx ID (prevents duplicate nonces)
 	maxSize   int
-	maxTxAge  int64         // nanoseconds
-	maxFuture int64         // nanoseconds
+	maxTxAge  int64 // nanoseconds
+	maxFuture int64 // nanoseconds
 }
 
 // NewMempool creates an empty mempool with the given limits.
