@@ -5,25 +5,21 @@ import (
 	"sync"
 )
 
-// BlockStore is the persistence interface used by Blockchain.
-// Implementations live in the storage package.
 type BlockStore interface {
 	GetBlock(hash string) (*Block, error)
 	PutBlock(block *Block) error
 	GetBlockByHeight(height int64) (*Block, error)
 	PutBlockByHeight(height int64, hash string) error
-	// GetBlockRange returns up to limit blocks starting from fromHeight.
-	// It stops early if a height has no block (end of chain).
+	// GetBlockRange stops early at the first missing height.
 	GetBlockRange(fromHeight int64, limit int) ([]*Block, error)
-	// GetTip returns the current tip hash, or ("", nil) for a fresh chain.
+	// GetTip returns ("", nil) for an empty store.
 	GetTip() (string, error)
 	SetTip(hash string) error
-	// CommitBlock atomically writes the block, its height index entry, and
-	// updates the tip pointer in a single batch operation.
+	// CommitBlock stores the block, its height index and the new tip atomically.
 	CommitBlock(block *Block) error
 }
 
-// Blockchain manages the canonical chain: stores blocks and tracks the tip.
+// Blockchain is the canonical chain: the block store plus the cached tip.
 type Blockchain struct {
 	mu     sync.RWMutex
 	store  BlockStore
@@ -31,13 +27,11 @@ type Blockchain struct {
 	height int64
 }
 
-// NewBlockchain returns a Blockchain backed by store.
-// Call Init() to load an existing chain tip from storage.
+// NewBlockchain needs Init before use to load an existing tip.
 func NewBlockchain(store BlockStore) *Blockchain {
 	return &Blockchain{store: store}
 }
 
-// Init loads the persisted tip from the block store.
 func (bc *Blockchain) Init() error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
@@ -47,7 +41,7 @@ func (bc *Blockchain) Init() error {
 		return fmt.Errorf("get tip: %w", err)
 	}
 	if tipHash == "" {
-		return nil // fresh chain
+		return nil
 	}
 	tip, err := bc.store.GetBlock(tipHash)
 	if err != nil {
@@ -58,20 +52,17 @@ func (bc *Blockchain) Init() error {
 	return nil
 }
 
-// AddBlock validates height continuity and PrevHash linkage, then persists the
-// block and advances the tip. Only the next sequential block is accepted;
-// blocks at the current or lower height are rejected to prevent forks.
+// AddBlock accepts only the block that extends the tip (height 0 on an empty
+// chain), so a competing block at a known height is never stored.
 func (bc *Blockchain) AddBlock(block *Block) error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
 	if bc.tip == nil {
-		// Genesis block must be at height 0.
 		if block.Header.Height != 0 {
 			return fmt.Errorf("first block must be at height 0, got %d", block.Header.Height)
 		}
 	} else {
-		// (F) Reject blocks at or below the current height (fork prevention).
 		if block.Header.Height <= bc.height {
 			return fmt.Errorf("block height %d <= current tip %d (possible fork)", block.Header.Height, bc.height)
 		}
@@ -91,35 +82,32 @@ func (bc *Blockchain) AddBlock(block *Block) error {
 	return nil
 }
 
-// GetBlock returns a block by its hash.
 func (bc *Blockchain) GetBlock(hash string) (*Block, error) {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 	return bc.store.GetBlock(hash)
 }
 
-// GetBlockByHeight returns the block at the given height.
 func (bc *Blockchain) GetBlockByHeight(height int64) (*Block, error) {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 	return bc.store.GetBlockByHeight(height)
 }
 
-// GetBlockRange returns up to limit blocks starting from fromHeight.
 func (bc *Blockchain) GetBlockRange(fromHeight int64, limit int) ([]*Block, error) {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 	return bc.store.GetBlockRange(fromHeight, limit)
 }
 
-// Tip returns the current chain tip, or nil for a fresh chain.
+// Tip is nil for an empty chain.
 func (bc *Blockchain) Tip() *Block {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 	return bc.tip
 }
 
-// Height returns the height of the current tip (0 for a fresh chain).
+// Height is 0 for an empty chain.
 func (bc *Blockchain) Height() int64 {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
