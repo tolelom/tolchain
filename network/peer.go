@@ -1,5 +1,5 @@
-// Package network handles peer-to-peer communication over TCP using
-// length-prefixed JSON messages.
+// Package network is the P2P layer: TCP (optionally mTLS) connections
+// carrying JSON messages framed by a 4-byte big-endian length.
 package network
 
 import (
@@ -14,7 +14,6 @@ import (
 	"time"
 )
 
-// MsgType labels a network message.
 type MsgType string
 
 const (
@@ -27,7 +26,6 @@ const (
 	MsgPong      MsgType = "pong"
 )
 
-// Message is the envelope for all P2P communication.
 type Message struct {
 	Type    MsgType         `json:"type"`
 	Payload json.RawMessage `json:"payload"`
@@ -49,8 +47,6 @@ type Peer struct {
 	maxMessageSize uint32
 }
 
-// NewPeer wraps an established TCP connection as a Peer.
-// writeTimeoutSec, readTimeoutSec, maxMsgSize configure per-peer limits.
 func NewPeer(id, addr string, conn net.Conn, writeTimeoutSec, readTimeoutSec, maxMsgSize int) *Peer {
 	p := &Peer{
 		Addr:           addr,
@@ -67,8 +63,7 @@ func (p *Peer) ID() string { return *p.id.Load() }
 
 func (p *Peer) setID(id string) { p.id.Store(&id) }
 
-// Connect dials the remote address and returns a connected Peer.
-// If tlsCfg is non-nil the connection is established over TLS.
+// Connect dials addr, over TLS when tlsCfg is non-nil.
 func Connect(id, addr string, tlsCfg *tls.Config, writeTimeoutSec, readTimeoutSec, maxMsgSize int) (*Peer, error) {
 	var conn net.Conn
 	var err error
@@ -83,7 +78,6 @@ func Connect(id, addr string, tlsCfg *tls.Config, writeTimeoutSec, readTimeoutSe
 	return NewPeer(id, addr, conn, writeTimeoutSec, readTimeoutSec, maxMsgSize), nil
 }
 
-// Send writes a length-prefixed JSON message to the peer.
 func (p *Peer) Send(msg Message) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -97,7 +91,6 @@ func (p *Peer) Send(msg Message) error {
 	if err := p.conn.SetWriteDeadline(time.Now().Add(p.writeTimeout)); err != nil {
 		return fmt.Errorf("set write deadline: %w", err)
 	}
-	// 4-byte big-endian length prefix
 	var header [4]byte
 	binary.BigEndian.PutUint32(header[:], uint32(len(data)))
 	if _, err := p.conn.Write(header[:]); err != nil {
@@ -107,9 +100,8 @@ func (p *Peer) Send(msg Message) error {
 	return err
 }
 
-// Receive reads the next length-prefixed JSON message.
-// The configured read timeout (readTimeout) prevents a stalled peer from
-// blocking indefinitely.
+// Receive reads the next message. The read deadline drops idle peers and the
+// size cap is checked before allocating the body.
 func (p *Peer) Receive() (Message, error) {
 	if err := p.conn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
 		return Message{}, fmt.Errorf("set read deadline: %w", err)
@@ -133,12 +125,12 @@ func (p *Peer) Receive() (Message, error) {
 	return msg, nil
 }
 
-// Close terminates the peer connection.
+// Close is idempotent.
 func (p *Peer) Close() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.closed {
 		p.closed = true
-		p.conn.Close()
+		_ = p.conn.Close()
 	}
 }

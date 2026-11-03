@@ -3,6 +3,7 @@ package network
 import (
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -14,10 +15,13 @@ import (
 	"github.com/tolelom/tolchain/metrics"
 )
 
-// MessageHandler is called for each received message.
+// maxPeerMsgsPerSec disconnects a peer that floods us with messages.
+const maxPeerMsgsPerSec = 100
+
 type MessageHandler func(peer *Peer, msg Message)
 
-// Node listens for incoming peers and manages outgoing connections.
+// Node accepts inbound peers, dials outbound ones and dispatches their
+// messages to registered handlers.
 type Node struct {
 	nodeID          string
 	listenAddr      string
@@ -35,11 +39,10 @@ type Node struct {
 
 	listener net.Listener
 	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
-// NewNode creates a Node that will listen on listenAddr.
-// If tlsCfg is non-nil the listener and outgoing connections use TLS.
-// maxPeers, writeTimeoutSec, readTimeoutSec, maxMessageSize configure network limits.
+// NewNode creates a node; a non-nil tlsCfg makes both directions use TLS.
 func NewNode(nodeID, listenAddr, chainID string, mempool *core.Mempool, tlsCfg *tls.Config, maxPeers, writeTimeoutSec, readTimeoutSec, maxMessageSize int) *Node {
 	n := &Node{
 		nodeID:          nodeID,
@@ -55,20 +58,17 @@ func NewNode(nodeID, listenAddr, chainID string, mempool *core.Mempool, tlsCfg *
 		handlers:        make(map[MsgType]MessageHandler),
 		stopCh:          make(chan struct{}),
 	}
-	// Register default handlers
 	n.Handle(MsgTx, n.handleTx)
 	n.Handle(MsgPing, n.handlePing)
 	return n
 }
 
-// Handle registers a handler for msg type.
 func (n *Node) Handle(typ MsgType, h MessageHandler) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.handlers[typ] = h
 }
 
-// Start begins accepting connections.
 func (n *Node) Start() error {
 	var ln net.Listener
 	var err error
@@ -85,11 +85,10 @@ func (n *Node) Start() error {
 	return nil
 }
 
-// Stop shuts down the node.
 func (n *Node) Stop() {
-	close(n.stopCh)
+	n.stopOnce.Do(func() { close(n.stopCh) })
 	if n.listener != nil {
-		n.listener.Close()
+		_ = n.listener.Close()
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -98,15 +97,13 @@ func (n *Node) Stop() {
 	}
 }
 
-// AddPeer dials addr and registers the peer.
+// AddPeer dials addr, registers the peer under id and sends hello.
 func (n *Node) AddPeer(id, addr string) error {
 	peer, err := Connect(id, addr, n.tlsConfig, n.writeTimeoutSec, n.readTimeoutSec, n.maxMessageSize)
 	if err != nil {
 		return err
 	}
 	n.mu.Lock()
-	// Close any previous connection registered under the same ID so it does
-	// not dangle: its readLoop will exit and (identity-checked) clean up.
 	if old, exists := n.peers[id]; exists && old != peer {
 		old.Close()
 	}
@@ -115,7 +112,6 @@ func (n *Node) AddPeer(id, addr string) error {
 	metrics.PeersConnected.Inc()
 	go n.readLoop(peer)
 
-	// Send hello
 	hello, err := json.Marshal(map[string]string{"node_id": n.nodeID})
 	if err != nil {
 		slog.Error("marshal hello", "component", "network", "error", err)
@@ -127,26 +123,21 @@ func (n *Node) AddPeer(id, addr string) error {
 	return nil
 }
 
-// Peer returns the connected peer with the given id, or nil if not found.
+// Peer returns nil when no peer has that id.
 func (n *Node) Peer(id string) *Peer {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.peers[id]
 }
 
-// Listener returns the underlying net.Listener. Useful for getting the bound address when started on ":0".
+// Listener exposes the bound address when started on ":0".
 func (n *Node) Listener() net.Listener {
 	return n.listener
 }
 
-// ReKeyPeer updates a peer's key in the peer map from oldID to newID.
-// It also updates the peer's ID field. This is used when a peer announces
-// its real node_id via MsgHello.
-//
-// If a different peer is already registered under newID (an earlier connection
-// from the same node not yet cleaned up), the old connection is closed and
-// replaced. Without this handling the previous peer would dangle in memory
-// until its readLoop exited on its own.
+// ReKeyPeer moves a peer from its provisional ID to the node_id it announced
+// in hello. An older connection already registered under newID is closed and
+// replaced.
 func (n *Node) ReKeyPeer(oldID, newID string) {
 	if oldID == newID {
 		return
@@ -158,8 +149,6 @@ func (n *Node) ReKeyPeer(oldID, newID string) {
 		return
 	}
 	delete(n.peers, oldID)
-	// Close any pre-existing peer registered under newID. Peer.Close() is
-	// safe to call inside this lock — it takes its own mutex and is idempotent.
 	if existing, conflict := n.peers[newID]; conflict && existing != p {
 		slog.Warn("ReKeyPeer: replacing existing peer with same node_id",
 			"component", "network", "old_id", oldID, "new_id", newID, "existing_addr", existing.Addr)
@@ -170,14 +159,12 @@ func (n *Node) ReKeyPeer(oldID, newID string) {
 	n.mu.Unlock()
 }
 
-// PeerCount returns the number of currently connected peers.
 func (n *Node) PeerCount() int {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return len(n.peers)
 }
 
-// Broadcast sends msg to all connected peers.
 func (n *Node) Broadcast(msg Message) {
 	n.mu.RLock()
 	peers := make([]*Peer, 0, len(n.peers))
@@ -192,7 +179,6 @@ func (n *Node) Broadcast(msg Message) {
 	}
 }
 
-// BroadcastTx serialises tx and sends it to all peers.
 func (n *Node) BroadcastTx(tx *core.Transaction) {
 	data, err := json.Marshal(tx)
 	if err != nil {
@@ -202,7 +188,6 @@ func (n *Node) BroadcastTx(tx *core.Transaction) {
 	n.Broadcast(Message{Type: MsgTx, Payload: data})
 }
 
-// BroadcastBlock serialises block and sends it to all peers.
 func (n *Node) BroadcastBlock(block *core.Block) {
 	data, err := json.Marshal(block)
 	if err != nil {
@@ -225,28 +210,32 @@ func (n *Node) acceptLoop() {
 				continue
 			}
 		}
-		n.mu.RLock()
-		peerCount := len(n.peers)
-		n.mu.RUnlock()
-		if peerCount >= n.maxPeers {
-			slog.Warn("max peers reached, rejecting connection", "component", "network", "max_peers", n.maxPeers, "remote", conn.RemoteAddr())
-			conn.Close()
+		peer, err := n.registerInbound(conn)
+		if err != nil {
+			slog.Warn("inbound connection rejected", "component", "network", "remote", conn.RemoteAddr(), "reason", err)
+			_ = conn.Close()
 			continue
 		}
-		id := conn.RemoteAddr().String()
-		n.mu.Lock()
-		if _, exists := n.peers[id]; exists {
-			n.mu.Unlock()
-			conn.Close()
-			slog.Warn("duplicate peer connection rejected", "component", "network", "id", id)
-			continue
-		}
-		peer := NewPeer(id, id, conn, n.writeTimeoutSec, n.readTimeoutSec, n.maxMessageSize)
-		n.peers[peer.ID()] = peer
-		n.mu.Unlock()
 		metrics.PeersConnected.Inc()
 		go n.readLoop(peer)
 	}
+}
+
+// registerInbound keys a new connection by its remote address until hello
+// tells us the node_id.
+func (n *Node) registerInbound(conn net.Conn) (*Peer, error) {
+	id := conn.RemoteAddr().String()
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.peers) >= n.maxPeers {
+		return nil, fmt.Errorf("max peers (%d) reached", n.maxPeers)
+	}
+	if _, exists := n.peers[id]; exists {
+		return nil, errors.New("duplicate peer connection")
+	}
+	peer := NewPeer(id, id, conn, n.writeTimeoutSec, n.readTimeoutSec, n.maxMessageSize)
+	n.peers[id] = peer
+	return peer, nil
 }
 
 func (n *Node) readLoop(peer *Peer) {
@@ -256,10 +245,7 @@ func (n *Node) readLoop(peer *Peer) {
 		}
 		peer.Close()
 		n.mu.Lock()
-		// Only delete the map entry if it still points at THIS peer. After a
-		// ReKeyPeer collision the key may now hold a live re-keyed peer, and
-		// deleting it would create a ghost peer that no longer receives
-		// broadcasts.
+		// After a ReKeyPeer collision the key may already hold the live peer.
 		if n.peers[peer.ID()] == peer {
 			delete(n.peers, peer.ID())
 		}
@@ -268,20 +254,18 @@ func (n *Node) readLoop(peer *Peer) {
 	}()
 
 	var msgCount int
-	lastReset := time.Now()
-
+	windowStart := time.Now()
 	for {
 		msg, err := peer.Receive()
 		if err != nil {
 			return
 		}
 
-		// Per-peer rate limiting: max 100 messages per second.
 		msgCount++
-		if time.Since(lastReset) >= time.Second {
-			msgCount = 1 // the message just received counts toward the new window
-			lastReset = time.Now()
-		} else if msgCount > 100 {
+		if time.Since(windowStart) >= time.Second {
+			msgCount = 1
+			windowStart = time.Now()
+		} else if msgCount > maxPeerMsgsPerSec {
 			slog.Warn("peer rate limit exceeded, disconnecting", "component", "network", "peer", peer.ID(), "msgs_per_sec", msgCount)
 			return
 		}
