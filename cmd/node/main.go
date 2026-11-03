@@ -158,7 +158,7 @@ func runNode(f flags, password string) error {
 	}()
 
 	status := func() any { return nodeStatus(cfg, bc, node, mempool, startTime) }
-	rpcServer, err := startRPC(cfg, bc, mempool, state, idx, emitter, status)
+	rpcServer, err := startRPC(cfg, bc, mempool, state, idx, emitter, node.BroadcastTx, status)
 	if err != nil {
 		return err
 	}
@@ -335,9 +335,10 @@ func connectSeeds(seeds []config.SeedPeer, node *network.Node, syncer *network.S
 }
 
 func startRPC(cfg *config.Config, bc *core.Blockchain, mempool *core.Mempool, state core.State, idx *indexer.Indexer,
-	emitter *events.Emitter, status func() any) (*rpc.Server, error) {
+	emitter *events.Emitter, relayTx func(*core.Transaction), status func() any) (*rpc.Server, error) {
 	addr := fmt.Sprintf(":%d", cfg.RPCPort)
 	handler := rpc.NewHandler(bc, mempool, state, idx, cfg.Genesis.ChainID)
+	handler.SetTxRelay(relayTx)
 	sse := rpc.NewSSEBroker(emitter, cfg.RPCAuthToken, cfg.RPC.SSEBufferSize)
 	r := cfg.RPC
 	server := rpc.NewServer(addr, handler, cfg.RPCAuthToken, sse, status, r.RateLimit, r.RateBurst,
