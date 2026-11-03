@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -22,155 +23,216 @@ import (
 	"github.com/tolelom/tolchain/storage"
 	"github.com/tolelom/tolchain/vm"
 	"github.com/tolelom/tolchain/wallet"
-	// Import VM modules to trigger their init() self-registration.
 )
 
-func main() {
-	// Initialize structured JSON logging.
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	startTime := time.Now()
+const (
+	nodeVersion          = "0.1.0"
+	seedRetryMinInterval = 5 * time.Second
+	seedRetryMaxInterval = 2 * time.Minute
+)
 
-	cfgPath := flag.String("config", "config.json", "path to config file")
-	keyPath := flag.String("key", "validator.key", "path to keystore file")
-	genKey := flag.Bool("genkey", false, "generate a new validator key and exit")
-	force := flag.Bool("force", false, "with -genkey: overwrite an existing keystore file")
-	genCerts := flag.String("gencerts", "", "generate CA + node TLS certs into the given directory and exit (requires node ID from config)")
+type flags struct {
+	cfgPath     string
+	cfgExplicit bool
+	keyPath     string
+	genKey      bool
+	force       bool
+	genCerts    string
+}
+
+func parseFlags() flags {
+	var f flags
+	flag.StringVar(&f.cfgPath, "config", "config.json", "path to config file")
+	flag.StringVar(&f.keyPath, "key", "validator.key", "path to keystore file")
+	flag.BoolVar(&f.genKey, "genkey", false, "generate a new validator key and exit")
+	flag.BoolVar(&f.force, "force", false, "with -genkey: overwrite an existing keystore file")
+	flag.StringVar(&f.genCerts, "gencerts", "", "generate CA + node TLS certs into the given directory and exit (requires node ID from config)")
 	flag.Parse()
-	cfgExplicit := false
-	flag.Visit(func(f *flag.Flag) { cfgExplicit = cfgExplicit || f.Name == "config" })
+	flag.Visit(func(fl *flag.Flag) { f.cfgExplicit = f.cfgExplicit || fl.Name == "config" })
+	return f
+}
 
-	// Read keystore password from environment (not CLI flags — they leak via ps).
+func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	f := parseFlags()
+
+	// From the environment, not a flag: flags are visible in ps.
 	password := os.Getenv("TOL_PASSWORD")
 	if password == "" {
 		slog.Warn("TOL_PASSWORD not set — keystore will use an empty password")
 	}
 
-	// ---- generate key mode ----
-	if *genKey {
-		// Refuse to silently overwrite an existing validator keystore: losing
-		// that key permanently locks the validator out of its identity.
-		if !*force {
-			if _, err := os.Stat(*keyPath); err == nil {
-				slog.Error("keystore already exists; refusing to overwrite (use -force to override)", "path", *keyPath)
-				os.Exit(1)
-			} else if !os.IsNotExist(err) {
-				slog.Error("stat keystore failed", "path", *keyPath, "error", err)
-				os.Exit(1)
-			}
-		}
-		w, err := wallet.Generate()
-		if err != nil {
-			slog.Error("generate key failed", "error", err)
-			os.Exit(1)
-		}
-		if err := wallet.SaveKey(*keyPath, password, w.PrivKey()); err != nil {
-			slog.Error("save key failed", "error", err)
-			os.Exit(1)
-		}
-		slog.Info("key generated", "pubkey", w.PubKey(), "path", *keyPath)
-		return
+	var err error
+	switch {
+	case f.genKey:
+		err = generateKey(f, password)
+	case f.genCerts != "":
+		err = generateCerts(f)
+	default:
+		err = runNode(f, password)
 	}
-
-	// ---- generate certs mode ----
-	if *genCerts != "" {
-		cfgForCerts, err := loadConfig(*cfgPath, cfgExplicit)
-		if err != nil {
-			slog.Error("config load failed", "error", err)
-			os.Exit(1)
-		}
-		if err := certgen.GenerateAll(*genCerts, cfgForCerts.NodeID, nil); err != nil {
-			slog.Error("gencerts failed", "error", err)
-			os.Exit(1)
-		}
-		slog.Info("certificates generated", "dir", *genCerts, "node_id", cfgForCerts.NodeID)
-		return
-	}
-
-	// ---- load config ----
-	cfg, err := loadConfig(*cfgPath, cfgExplicit)
 	if err != nil {
-		slog.Error("config load failed", "error", err)
+		slog.Error("node failed", "error", err)
 		os.Exit(1)
 	}
+}
 
-	// ---- configure log level ----
-	{
-		var level slog.Level
-		switch cfg.LogLevel {
-		case "debug":
-			level = slog.LevelDebug
-		case "warn":
-			level = slog.LevelWarn
-		case "error":
-			level = slog.LevelError
-		default:
-			level = slog.LevelInfo
+// generateKey refuses to overwrite an existing keystore without -force:
+// losing it locks the validator out of its identity for good.
+func generateKey(f flags, password string) error {
+	if !f.force {
+		if _, err := os.Stat(f.keyPath); err == nil {
+			return fmt.Errorf("keystore %s already exists; refusing to overwrite (use -force to override)", f.keyPath)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("stat keystore: %w", err)
 		}
-		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
 	}
-
-	// ---- load validator key ----
-	privKey, err := wallet.LoadKey(*keyPath, password)
+	w, err := wallet.Generate()
 	if err != nil {
-		slog.Error("load key failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("generate key: %w", err)
 	}
+	if err := wallet.SaveKey(f.keyPath, password, w.PrivKey()); err != nil {
+		return fmt.Errorf("save key: %w", err)
+	}
+	slog.Info("key generated", "pubkey", w.PubKey(), "path", f.keyPath)
+	return nil
+}
 
-	// If using defaults (no config file), auto-register the loaded key.
+func generateCerts(f flags) error {
+	cfg, err := loadConfig(f.cfgPath, f.cfgExplicit)
+	if err != nil {
+		return fmt.Errorf("config load: %w", err)
+	}
+	if err := certgen.GenerateAll(f.genCerts, cfg.NodeID, nil); err != nil {
+		return fmt.Errorf("gencerts: %w", err)
+	}
+	slog.Info("certificates generated", "dir", f.genCerts, "node_id", cfg.NodeID)
+	return nil
+}
+
+func runNode(f flags, password string) error {
+	startTime := time.Now()
+	cfg, err := loadConfig(f.cfgPath, f.cfgExplicit)
+	if err != nil {
+		return fmt.Errorf("config load: %w", err)
+	}
+	setLogLevel(cfg.LogLevel)
+
+	privKey, err := wallet.LoadKey(f.keyPath, password)
+	if err != nil {
+		return fmt.Errorf("load key: %w", err)
+	}
 	ensureDevValidator(cfg, privKey.Public().Hex())
 
-	// ---- open DB ----
+	db, state, bc, err := openChain(cfg)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+
+	emitter := events.NewEmitter()
+	idx := indexer.New(db, emitter)
+	mempool := core.NewMempool(cfg.Mempool.MaxSize, cfg.Mempool.MaxTxAgeSec, cfg.Mempool.MaxFutureSec)
+	exec := newExecutor(cfg, state, bc, emitter)
+
+	poa := consensus.New(cfg, bc, state, mempool, exec, emitter, privKey)
+	if recovered, err := poa.RecoverTipState(); err != nil {
+		return fmt.Errorf("state does not match the stored tip: %w", err)
+	} else if recovered {
+		slog.Warn("replayed the tip block: its state commit was missing", "height", bc.Height())
+	}
+
+	node, syncer, err := startP2P(cfg, bc, poa, exec, state, emitter, mempool)
+	if err != nil {
+		return err
+	}
+	defer node.Stop()
+	broadcastAndPruneCommittedBlocks(cfg, db, emitter, node)
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		keepSeedsConnected(cfg.SeedPeers, node, syncer, done)
+	}()
+
+	status := func() any { return nodeStatus(cfg, bc, node, mempool, startTime) }
+	rpcServer, err := startRPC(cfg, bc, mempool, state, idx, emitter, status)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rpcServer.Stop() }()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		poa.Run(time.Duration(cfg.Consensus.BlockIntervalSec)*time.Second, done)
+	}()
+	slog.Info("consensus running", "validator", privKey.Public().Hex())
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+	slog.Info("shutting down...")
+
+	// Stop block production before the deferred RPC, P2P and DB shutdown.
+	close(done)
+	wg.Wait()
+	slog.Info("shutdown complete")
+	return nil
+}
+
+func setLogLevel(name string) {
+	level := slog.LevelInfo
+	switch name {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
+}
+
+// openChain opens the shared LevelDB (state, blocks and indexes live under
+// different prefixes) and writes genesis on an empty database. An existing
+// database keeps the genesis it was created with.
+func openChain(cfg *config.Config) (*storage.LevelDB, *storage.StateDB, *core.Blockchain, error) {
 	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
-		slog.Error("mkdir data dir failed", "error", err)
-		os.Exit(1)
+		return nil, nil, nil, fmt.Errorf("mkdir data dir: %w", err)
 	}
 	db, err := storage.NewLevelDB(cfg.DataDir + "/chain")
 	if err != nil {
-		slog.Error("open db failed", "error", err)
-		os.Exit(1)
+		return nil, nil, nil, fmt.Errorf("open db: %w", err)
 	}
-	defer db.Close()
-
-	stateDB := db // reuse same DB with different key prefixes
-	blockStore := storage.NewLevelBlockStore(db)
-
-	// ---- initialise state ----
-	state := storage.NewStateDB(stateDB)
-
-	// ---- initialise blockchain ----
-	bc := core.NewBlockchain(blockStore)
-	if err := bc.Init(); err != nil {
-		slog.Error("blockchain init failed", "error", err)
-		os.Exit(1)
+	state := storage.NewStateDB(db)
+	bc := core.NewBlockchain(storage.NewLevelBlockStore(db))
+	err = bc.Init()
+	if err == nil && bc.Tip() == nil {
+		err = commitGenesis(cfg, state, bc)
 	}
-
-	// ---- genesis block (if fresh chain) ----
-	// Only built when the DB is empty; existing data dirs keep their stored
-	// genesis untouched. The block is fully deterministic from the config, so
-	// every node with the same config computes the same genesis hash.
-	if bc.Tip() == nil {
-		genesisBlock, err := config.CreateGenesisBlock(cfg, state)
-		if err != nil {
-			slog.Error("genesis creation failed", "error", err)
-			os.Exit(1)
-		}
-		if err := bc.AddBlock(genesisBlock); err != nil {
-			slog.Error("add genesis failed", "error", err)
-			os.Exit(1)
-		}
-		slog.Info("genesis block committed", "hash", genesisBlock.Hash)
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, nil, err
 	}
+	return db, state, bc, nil
+}
 
-	// ---- events ----
-	emitter := events.NewEmitter()
+func commitGenesis(cfg *config.Config, state core.State, bc *core.Blockchain) error {
+	genesis, err := config.CreateGenesisBlock(cfg, state)
+	if err != nil {
+		return fmt.Errorf("genesis creation: %w", err)
+	}
+	if err := bc.AddBlock(genesis); err != nil {
+		return fmt.Errorf("add genesis: %w", err)
+	}
+	slog.Info("genesis block committed", "hash", genesis.Hash)
+	return nil
+}
 
-	// ---- indexer ----
-	idx := indexer.New(db, emitter)
-
-	// ---- mempool ----
-	mempool := core.NewMempool(cfg.Mempool.MaxSize, cfg.Mempool.MaxTxAgeSec, cfg.Mempool.MaxFutureSec)
-
-	// ---- VM executor ----
+func newExecutor(cfg *config.Config, state core.State, bc *core.Blockchain, emitter *events.Emitter) *vm.Executor {
 	exec := vm.NewExecutor(state, emitter)
 	exec.SetOperators(cfg.Operators)
 	exec.SetMaxTotalSupply(cfg.MaxTotalSupply)
@@ -181,177 +243,139 @@ func main() {
 		}
 		return b.Hash, nil
 	})
+	return exec
+}
 
-	// ---- consensus ----
-	poa := consensus.New(cfg, bc, state, mempool, exec, emitter, privKey)
-	if recovered, err := poa.RecoverTipState(); err != nil {
-		slog.Error("state does not match the stored tip", "error", err)
-		os.Exit(1)
-	} else if recovered {
-		slog.Warn("replayed the tip block: its state commit was missing", "height", bc.Height())
-	}
-
-	// ---- TLS ----
+func startP2P(cfg *config.Config, bc *core.Blockchain, poa *consensus.PoA, exec *vm.Executor, state core.State,
+	emitter *events.Emitter, mempool *core.Mempool) (*network.Node, *network.Syncer, error) {
 	tlsCfg, err := config.LoadTLSConfig(cfg.TLS)
 	if err != nil {
-		slog.Error("tls config failed", "error", err)
-		os.Exit(1)
+		return nil, nil, fmt.Errorf("tls config: %w", err)
 	}
 	if tlsCfg != nil {
 		slog.Info("mTLS enabled for P2P")
 	}
-
-	// ---- network ----
-	p2pAddr := fmt.Sprintf(":%d", cfg.P2PPort)
-	node := network.NewNode(cfg.NodeID, p2pAddr, cfg.Genesis.ChainID, mempool, tlsCfg, cfg.Network.MaxPeers, cfg.Network.WriteTimeoutSec, cfg.Network.ReadTimeoutSec, cfg.Network.MaxMessageSize)
-	syncer := network.NewSyncer(node, bc, poa, exec, state, emitter, mempool, cfg.Network.SyncBatchSize, cfg.Network.MaxSyncBatchSize)
+	addr := fmt.Sprintf(":%d", cfg.P2PPort)
+	n := cfg.Network
+	node := network.NewNode(cfg.NodeID, addr, cfg.Genesis.ChainID, mempool, tlsCfg, n.MaxPeers, n.WriteTimeoutSec, n.ReadTimeoutSec, n.MaxMessageSize)
+	syncer := network.NewSyncer(node, bc, poa, exec, state, emitter, mempool, n.SyncBatchSize, n.MaxSyncBatchSize)
 	if err := node.Start(); err != nil {
-		slog.Error("p2p start failed", "error", err)
-		os.Exit(1)
+		return nil, nil, fmt.Errorf("p2p start: %w", err)
 	}
-	defer node.Stop()
-	slog.Info("P2P listening", "addr", p2pAddr)
+	slog.Info("P2P listening", "addr", addr)
+	return node, syncer, nil
+}
 
-	// ---- block pruner ----
+// broadcastAndPruneCommittedBlocks relays blocks this node produced and prunes
+// old ones after each.
+func broadcastAndPruneCommittedBlocks(cfg *config.Config, db storage.DB, emitter *events.Emitter, node *network.Node) {
 	var pruner *storage.Pruner
 	if cfg.PruneKeepBlocks > 0 {
 		pruner = storage.NewPruner(db, cfg.PruneKeepBlocks)
 		slog.Info("block pruning enabled", "keep_blocks", cfg.PruneKeepBlocks)
 	}
-
-	// ---- broadcast committed blocks ----
 	emitter.Subscribe(events.EventBlockCommit, func(ev events.Event) {
 		b, ok := ev.Data["block"].(*core.Block)
 		if !ok || b == nil {
 			return
 		}
 		node.BroadcastBlock(b)
-
-		// Prune old blocks after each commit.
 		if pruner != nil {
 			if err := pruner.Prune(b.Header.Height); err != nil {
 				slog.Error("block pruning failed", "error", err)
 			}
 		}
 	})
+}
 
-	// ---- shutdown coordination ----
-	done := make(chan struct{})
-	var wg sync.WaitGroup
-
-	// ---- connect to seed peers ----
-	connectSeeds := func() int {
-		connected := 0
-		for _, sp := range cfg.SeedPeers {
-			// Skip already connected peers.
-			if node.Peer(sp.ID) != nil {
-				connected++
-				continue
-			}
-			if err := node.AddPeer(sp.ID, sp.Addr); err != nil {
-				slog.Warn("seed peer connection failed", "peer_id", sp.ID, "addr", sp.Addr, "error", err)
-				continue
-			}
-			if peer := node.Peer(sp.ID); peer != nil {
-				syncer.SyncWithPeer(peer)
-			}
-			connected++
-			slog.Info("connected to seed peer", "peer_id", sp.ID, "addr", sp.Addr)
-		}
-		return connected
-	}
-	if connectedSeeds := connectSeeds(); len(cfg.SeedPeers) > 0 && connectedSeeds == 0 {
+// keepSeedsConnected connects to every seed now, then retries missing ones
+// with exponential backoff until done is closed.
+func keepSeedsConnected(seeds []config.SeedPeer, node *network.Node, syncer *network.Syncer, done <-chan struct{}) {
+	if connected := connectSeeds(seeds, node, syncer); len(seeds) > 0 && connected == 0 {
 		slog.Warn("failed to connect to any seed peer — node is isolated")
 	}
-
-	// Background goroutine retries disconnected seed peers with exponential backoff.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		interval := 5 * time.Second
-		maxInterval := 2 * time.Minute
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				if connectSeeds() == len(cfg.SeedPeers) {
-					// All seeds connected — reset backoff.
-					interval = 5 * time.Second
-				} else {
-					// Increase backoff up to max.
-					interval = interval * 2
-					if interval > maxInterval {
-						interval = maxInterval
-					}
-				}
-				ticker.Reset(interval)
+	interval := seedRetryMinInterval
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			if connectSeeds(seeds, node, syncer) == len(seeds) {
+				interval = seedRetryMinInterval
+			} else {
+				interval = min(interval*2, seedRetryMaxInterval)
 			}
+			ticker.Reset(interval)
 		}
-	}()
+	}
+}
 
-	// ---- RPC ----
-	rpcAddr := fmt.Sprintf(":%d", cfg.RPCPort)
-	rpcHandler := rpc.NewHandler(bc, mempool, state, idx, cfg.Genesis.ChainID)
-	sseBroker := rpc.NewSSEBroker(emitter, cfg.RPCAuthToken, cfg.RPC.SSEBufferSize)
-	statusFunc := func() any {
-		tip := bc.Tip()
-		var blockHeight int64
-		var blockHash string
-		if tip != nil {
-			blockHeight = tip.Header.Height
-			blockHash = tip.Hash
+// connectSeeds dials the seeds that are not connected and returns how many
+// are connected afterwards.
+func connectSeeds(seeds []config.SeedPeer, node *network.Node, syncer *network.Syncer) int {
+	connected := 0
+	for _, sp := range seeds {
+		if node.Peer(sp.ID) != nil {
+			connected++
+			continue
 		}
-		return map[string]any{
-			"node_id":        cfg.NodeID,
-			"chain_id":       cfg.Genesis.ChainID,
-			"block_height":   blockHeight,
-			"block_hash":     blockHash,
-			"peer_count":     node.PeerCount(),
-			"mempool_size":   mempool.Size(),
-			"uptime_seconds": int(time.Since(startTime).Seconds()),
-			"version":        "0.1.0",
+		if err := node.AddPeer(sp.ID, sp.Addr); err != nil {
+			slog.Warn("seed peer connection failed", "peer_id", sp.ID, "addr", sp.Addr, "error", err)
+			continue
 		}
+		if peer := node.Peer(sp.ID); peer != nil {
+			syncer.SyncWithPeer(peer)
+		}
+		connected++
+		slog.Info("connected to seed peer", "peer_id", sp.ID, "addr", sp.Addr)
 	}
-	rpcServer := rpc.NewServer(rpcAddr, rpcHandler, cfg.RPCAuthToken, sseBroker, statusFunc, cfg.RPC.RateLimit, cfg.RPC.RateBurst, cfg.RPC.ReadTimeoutSec, cfg.RPC.WriteTimeoutSec, cfg.RPC.IdleTimeoutSec, cfg.RPC.MaxBodySize, cfg.RPC.TrustedProxies)
-	if err := rpcServer.Start(); err != nil {
-		slog.Error("rpc start failed", "error", err)
-		os.Exit(1)
+	return connected
+}
+
+func startRPC(cfg *config.Config, bc *core.Blockchain, mempool *core.Mempool, state core.State, idx *indexer.Indexer,
+	emitter *events.Emitter, status func() any) (*rpc.Server, error) {
+	addr := fmt.Sprintf(":%d", cfg.RPCPort)
+	handler := rpc.NewHandler(bc, mempool, state, idx, cfg.Genesis.ChainID)
+	sse := rpc.NewSSEBroker(emitter, cfg.RPCAuthToken, cfg.RPC.SSEBufferSize)
+	r := cfg.RPC
+	server := rpc.NewServer(addr, handler, cfg.RPCAuthToken, sse, status, r.RateLimit, r.RateBurst,
+		r.ReadTimeoutSec, r.WriteTimeoutSec, r.IdleTimeoutSec, r.MaxBodySize, r.TrustedProxies)
+	if err := server.Start(); err != nil {
+		return nil, fmt.Errorf("rpc start: %w", err)
 	}
-	defer rpcServer.Stop()
-	slog.Info("RPC listening", "addr", rpcAddr)
+	slog.Info("RPC listening", "addr", addr)
 	if cfg.RPCAuthToken != "" {
 		slog.Info("RPC Bearer token authentication enabled")
 	}
-
-	// ---- consensus loop ----
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		poa.Run(time.Duration(cfg.Consensus.BlockIntervalSec)*time.Second, done)
-	}()
-	slog.Info("consensus running", "validator", privKey.Public().Hex())
-
-	// ---- graceful shutdown ----
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
-	slog.Info("shutting down...")
-
-	// 1. Stop consensus first (no new blocks written)
-	close(done)
-	wg.Wait()
-
-	// 2. Deferred calls run in LIFO: rpcServer.Stop → node.Stop → db.Close
-	slog.Info("shutdown complete")
+	return server, nil
 }
 
+func nodeStatus(cfg *config.Config, bc *core.Blockchain, node *network.Node, mempool *core.Mempool, startTime time.Time) map[string]any {
+	var height int64
+	var hash string
+	if tip := bc.Tip(); tip != nil {
+		height, hash = tip.Header.Height, tip.Hash
+	}
+	return map[string]any{
+		"node_id":        cfg.NodeID,
+		"chain_id":       cfg.Genesis.ChainID,
+		"block_height":   height,
+		"block_hash":     hash,
+		"peer_count":     node.PeerCount(),
+		"mempool_size":   mempool.Size(),
+		"uptime_seconds": int(time.Since(startTime).Seconds()),
+		"version":        nodeVersion,
+	}
+}
+
+// loadConfig falls back to the dev defaults only when -config was not given
+// and the default file is missing.
 func loadConfig(path string, explicit bool) (*config.Config, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
-		if os.IsNotExist(err) && !explicit {
+		if errors.Is(err, os.ErrNotExist) && !explicit {
 			slog.Info("config file not found, using defaults (dev mode)", "path", path)
 			return config.DefaultConfig(), nil
 		}
@@ -360,8 +384,8 @@ func loadConfig(path string, explicit bool) (*config.Config, error) {
 	return cfg, nil
 }
 
-// ensureDevValidator adds the loaded key as the sole validator when using the
-// default config (no config file). This prevents validation errors in dev mode.
+// ensureDevValidator makes the loaded key the sole validator when the config
+// lists none (dev defaults), so validation passes.
 func ensureDevValidator(cfg *config.Config, pubKeyHex string) {
 	if len(cfg.Validators) == 0 {
 		cfg.Validators = []string{pubKeyHex}
