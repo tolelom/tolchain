@@ -1,135 +1,139 @@
 package core
 
-// Account holds a participant's token balance and replay-protection nonce.
-// Address is the hex-encoded ed25519 public key.
+// Every address-like field in state (Address, Owner, Creator, Seller, players,
+// Committer, Granter, Grantee) is a hex-encoded ed25519 public key.
+
+// TotalSupplyAddress is the pseudo-account whose balance tracks minted
+// tokens against Config.MaxTotalSupply. It is not a public key, so no one can
+// sign for it.
+const TotalSupplyAddress = "system:total_supply"
+
 type Account struct {
-	Address string `json:"address"` // pubkey hex
+	Address string `json:"address"`
 	Balance uint64 `json:"balance"`
 	Nonce   uint64 `json:"nonce"`
 }
 
-// Asset is a universal game asset: item, card, character, etc.
-// Properties is an open map so each game genre can store arbitrary fields.
+// Asset is a game item, card, character and so on. Properties is open so each
+// game can store its own fields.
 type Asset struct {
 	ID              string         `json:"id"`
 	TemplateID      string         `json:"template_id"`
-	Owner           string         `json:"owner"` // pubkey hex
+	Owner           string         `json:"owner"`
 	Properties      map[string]any `json:"properties"`
 	Tradeable       bool           `json:"tradeable"`
 	MintedAt        int64          `json:"minted_at"`
-	ActiveListingID string         `json:"active_listing_id,omitempty"` // non-empty while listed
+	ActiveListingID string         `json:"active_listing_id,omitempty"`
 }
 
-// AssetTemplate defines the schema and rules for a class of assets.
+// Properties the inventory module writes into Asset.Properties while an asset
+// is equipped.
+const (
+	AssetPropEquipped = "equipped"
+	AssetPropSlot     = "slot"
+)
+
+func (a *Asset) Equipped() bool {
+	equipped, _ := a.Properties[AssetPropEquipped].(bool)
+	return equipped
+}
+
+func (a *Asset) Listed() bool { return a.ActiveListingID != "" }
+
 type AssetTemplate struct {
 	ID        string         `json:"id"`
 	Name      string         `json:"name"`
-	Schema    map[string]any `json:"schema"` // property key → type hint
+	Schema    map[string]any `json:"schema"` // property key → type hint ("string", "int", "bool")
 	Tradeable bool           `json:"tradeable"`
-	Creator   string         `json:"creator"` // pubkey hex of registrant
+	Creator   string         `json:"creator"`
 }
 
-// Session represents an active or completed game match.
+const (
+	SessionStatusOpen      = "open"
+	SessionStatusClosed    = "closed"
+	SessionStatusCancelled = "cancelled"
+)
+
 type Session struct {
 	ID        string            `json:"id"`
 	GameID    string            `json:"game_id"`
-	Creator   string            `json:"creator"` // pubkey hex of the session opener
-	Players   []string          `json:"players"` // pubkey hexes
-	Stakes    uint64            `json:"stakes"`  // tokens locked per player
-	Status    string            `json:"status"`  // "open" | "closed"
-	Outcome   map[string]uint64 `json:"outcome"` // pubkey hex → reward
+	Creator   string            `json:"creator"`
+	Players   []string          `json:"players"`
+	Stakes    uint64            `json:"stakes"` // per player
+	Status    string            `json:"status"`
+	Outcome   map[string]uint64 `json:"outcome"` // player → reward
 	CreatedAt int64             `json:"created_at"`
 	ClosedAt  int64             `json:"closed_at"`
 }
 
-// MarketListing is a P2P asset sale offer.
 type MarketListing struct {
 	ID        string `json:"id"`
 	AssetID   string `json:"asset_id"`
-	Seller    string `json:"seller"` // pubkey hex
+	Seller    string `json:"seller"`
 	Price     uint64 `json:"price"`
 	Active    bool   `json:"active"`
 	CreatedAt int64  `json:"created_at"`
 }
 
-// Inventory tracks a player's equipped item slots.
 type Inventory struct {
-	Owner string            `json:"owner"` // pubkey hex
-	Slots map[string]string `json:"slots"` // slot_name → asset_id
+	Owner string            `json:"owner"`
+	Slots map[string]string `json:"slots"` // slot name → asset ID
 }
 
-// RandomCommitment stores a commit-reveal random number generation request.
 type RandomCommitment struct {
 	ID          string `json:"id"`
-	Committer   string `json:"committer"`    // pubkey hex
-	CommitHash  string `json:"commit_hash"`  // SHA-256 hex
-	BlockHeight int64  `json:"block_height"` // block when committed
+	Committer   string `json:"committer"`
+	CommitHash  string `json:"commit_hash"` // hex SHA-256 of the secret
+	BlockHeight int64  `json:"block_height"`
 	Revealed    bool   `json:"revealed"`
 	Secret      string `json:"secret,omitempty"`
-	Result      string `json:"result,omitempty"` // deterministic random hex
+	Result      string `json:"result,omitempty"`
 }
 
-// State is the full blockchain state interface. Implementations must be
-// snapshot-able so the executor can roll back failed transactions.
+// State is the world state seen by the executor and RPC.
 type State interface {
-	// Accounts
 	GetAccount(address string) (*Account, error)
 	SetAccount(account *Account) error
 
-	// Assets
 	GetAsset(id string) (*Asset, error)
 	SetAsset(asset *Asset) error
 	DeleteAsset(id string) error
 
-	// Templates
 	GetTemplate(id string) (*AssetTemplate, error)
 	SetTemplate(t *AssetTemplate) error
 
-	// Sessions
 	GetSession(id string) (*Session, error)
 	SetSession(s *Session) error
 
-	// Market
 	GetListing(id string) (*MarketListing, error)
 	SetListing(l *MarketListing) error
 
-	// Inventory
 	GetInventory(owner string) (*Inventory, error)
 	SetInventory(inv *Inventory) error
 
-	// Random commitments
 	GetRandomCommitment(id string) (*RandomCommitment, error)
 	SetRandomCommitment(rc *RandomCommitment) error
 
-	// Delegations
 	GetDelegation(granter, grantee string) (*DelegationGrant, error)
 	SetDelegation(grant *DelegationGrant) error
 	DeleteDelegation(granter, grantee string) error
 	GetDelegationsByGranter(granter string) ([]*DelegationGrant, error)
 	GetDelegationsByGrantee(grantee string) ([]*DelegationGrant, error)
 
-	// Snapshot / rollback / commit
 	Snapshot() (int, error)
 	RevertToSnapshot(id int) error
-	// ComputeRoot returns the deterministic state root from the current write
-	// buffer without flushing. Call this before signing a block.
-	// A non-nil error means the root could not be computed from the full
-	// state; callers must abort block production/acceptance.
+	// ComputeRoot hashes the state including uncommitted writes. On error the
+	// caller must abort the block: the root would cover partial state.
 	ComputeRoot() (string, error)
-	// Commit flushes the write buffer to the underlying DB and clears it.
-	// Always call ComputeRoot() first to obtain the root for the block header.
+	// Commit persists uncommitted writes; call it only after the block that
+	// carries ComputeRoot's result is stored.
 	Commit() error
 
-	// BlockRLock acquires a read lock on the block-execution mutex.
-	// RPC state queries should hold this lock to avoid reading partially-applied
-	// state during block execution.
-	BlockRLock()
-	// BlockRUnlock releases the read lock acquired by BlockRLock.
-	BlockRUnlock()
-	// BlockLock acquires an exclusive write lock on the block-execution mutex.
-	// Block producers (consensus, sync) should hold this lock during the
-	// entire execute-commit cycle to prevent RPC from seeing intermediate state.
+	// BlockLock is held by block producers and appliers for the whole
+	// execute-commit cycle; RPC reads take BlockRLock so they never observe a
+	// half-applied block.
 	BlockLock()
-	// BlockUnlock releases the write lock acquired by BlockLock.
 	BlockUnlock()
+	BlockRLock()
+	BlockRUnlock()
 }

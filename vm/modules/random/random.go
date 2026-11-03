@@ -16,10 +16,9 @@ func handleRandomCommit(ctx *vm.Context, payload json.RawMessage) error {
 	if err := vm.RequireOperator(ctx); err != nil {
 		return err
 	}
-
-	var p core.RandomCommitPayload
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return fmt.Errorf("decode random_commit payload: %w", err)
+	p, err := vm.DecodePayload[core.RandomCommitPayload](payload, core.TxRandomCommit)
+	if err != nil {
+		return err
 	}
 	if p.CommitID == "" || p.CommitHash == "" {
 		return errors.New("commit_id and commit_hash required")
@@ -28,8 +27,7 @@ func handleRandomCommit(ctx *vm.Context, payload json.RawMessage) error {
 		return fmt.Errorf("commit_hash must be hex: %w", err)
 	}
 
-	// Check for duplicate.
-	_, err := ctx.State.GetRandomCommitment(p.CommitID)
+	_, err = ctx.State.GetRandomCommitment(p.CommitID)
 	if err == nil {
 		return fmt.Errorf("commitment %q already exists: %w", p.CommitID, core.ErrAlreadyExists)
 	}
@@ -47,14 +45,7 @@ func handleRandomCommit(ctx *vm.Context, payload json.RawMessage) error {
 		return err
 	}
 
-	if ctx.Emitter != nil {
-		ctx.Emitter.Emit(events.Event{
-			Type:        events.EventRandomCommit,
-			TxID:        ctx.Tx.ID,
-			BlockHeight: ctx.Block.Header.Height,
-			Data:        events.RandomCommitData{CommitID: p.CommitID, Committer: ctx.EffectiveSender}.Map(),
-		})
-	}
+	ctx.Emit(events.EventRandomCommit, events.RandomCommitData{CommitID: p.CommitID, Committer: ctx.EffectiveSender})
 	return nil
 }
 
@@ -62,10 +53,9 @@ func handleRandomReveal(ctx *vm.Context, payload json.RawMessage) error {
 	if err := vm.RequireOperator(ctx); err != nil {
 		return err
 	}
-
-	var p core.RandomRevealPayload
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return fmt.Errorf("decode random_reveal payload: %w", err)
+	p, err := vm.DecodePayload[core.RandomRevealPayload](payload, core.TxRandomReveal)
+	if err != nil {
+		return err
 	}
 	if p.CommitID == "" || p.Secret == "" {
 		return errors.New("commit_id and secret required")
@@ -75,7 +65,6 @@ func handleRandomReveal(ctx *vm.Context, payload json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("commitment %q not found: %w", p.CommitID, err)
 	}
-
 	if rc.Revealed {
 		return errors.New("already revealed")
 	}
@@ -84,7 +73,7 @@ func handleRandomReveal(ctx *vm.Context, payload json.RawMessage) error {
 	}
 
 	// 결과는 커밋 뒤에 생기는 목표 블록의 해시에 묶는다. 커밋 시점에는 아무도 모르고,
-	// 공개 블록을 골라도 바뀌지 않는다. 공개는 목표 블록 다음부터 RandomRevealWindow 블록 안에만 받는다.
+	// 공개 블록을 골라도 바뀌지 않는다.
 	target := rc.BlockHeight + core.RandomTargetDelay
 	if ctx.Block.Header.Height <= target {
 		return fmt.Errorf("reveal too early: reveal allowed from height %d", target+1)
@@ -92,13 +81,9 @@ func handleRandomReveal(ctx *vm.Context, payload json.RawMessage) error {
 	if ctx.Block.Header.Height > target+core.RandomRevealWindow {
 		return fmt.Errorf("reveal expired: window closed at height %d", target+core.RandomRevealWindow)
 	}
-
-	// Verify: hash(secret) must equal commit_hash.
-	secretHash := crypto.Hash([]byte(p.Secret))
-	if secretHash != rc.CommitHash {
+	if crypto.Hash([]byte(p.Secret)) != rc.CommitHash {
 		return errors.New("secret does not match commitment hash")
 	}
-
 	if ctx.BlockHash == nil {
 		return errors.New("block hash lookup not configured")
 	}
@@ -115,13 +100,6 @@ func handleRandomReveal(ctx *vm.Context, payload json.RawMessage) error {
 		return err
 	}
 
-	if ctx.Emitter != nil {
-		ctx.Emitter.Emit(events.Event{
-			Type:        events.EventRandomReveal,
-			TxID:        ctx.Tx.ID,
-			BlockHeight: ctx.Block.Header.Height,
-			Data:        events.RandomRevealData{CommitID: p.CommitID, Result: result}.Map(),
-		})
-	}
+	ctx.Emit(events.EventRandomReveal, events.RandomRevealData{CommitID: p.CommitID, Result: result})
 	return nil
 }

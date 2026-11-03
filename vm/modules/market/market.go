@@ -12,9 +12,9 @@ import (
 )
 
 func handleListMarket(ctx *vm.Context, payload json.RawMessage) error {
-	var p core.ListMarketPayload
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return fmt.Errorf("decode list_market payload: %w", err)
+	p, err := vm.DecodePayload[core.ListMarketPayload](payload, core.TxListMarket)
+	if err != nil {
+		return err
 	}
 	if p.Price == 0 {
 		return errors.New("price must be > 0")
@@ -30,16 +30,14 @@ func handleListMarket(ctx *vm.Context, payload json.RawMessage) error {
 	if !asset.Tradeable {
 		return errors.New("asset is not tradeable")
 	}
-	if equipped, _ := asset.Properties["equipped"].(bool); equipped {
+	if asset.Equipped() {
 		return fmt.Errorf("asset %q is equipped; unequip it before listing", p.AssetID)
 	}
-	// Prevent double-listing the same asset.
-	if asset.ActiveListingID != "" {
+	if asset.Listed() {
 		return fmt.Errorf("asset %q is already listed (listing %s): %w", p.AssetID, asset.ActiveListingID, core.ErrAlreadyExists)
 	}
 
 	listingID := crypto.Hash([]byte(ctx.Tx.ID + ":listing:" + p.AssetID))
-
 	listing := &core.MarketListing{
 		ID:        listingID,
 		AssetID:   p.AssetID,
@@ -51,28 +49,19 @@ func handleListMarket(ctx *vm.Context, payload json.RawMessage) error {
 	if err := ctx.State.SetListing(listing); err != nil {
 		return err
 	}
-
-	// Mark the asset as having an active listing so it cannot be listed again.
 	asset.ActiveListingID = listingID
 	if err := ctx.State.SetAsset(asset); err != nil {
 		return err
 	}
 
-	if ctx.Emitter != nil {
-		ctx.Emitter.Emit(events.Event{
-			Type:        events.EventMarketList,
-			TxID:        ctx.Tx.ID,
-			BlockHeight: ctx.Block.Header.Height,
-			Data:        events.MarketListData{ListingID: listingID, AssetID: p.AssetID, Price: p.Price}.Map(),
-		})
-	}
+	ctx.Emit(events.EventMarketList, events.MarketListData{ListingID: listingID, AssetID: p.AssetID, Price: p.Price})
 	return nil
 }
 
 func handleBuyMarket(ctx *vm.Context, payload json.RawMessage) error {
-	var p core.BuyMarketPayload
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return fmt.Errorf("decode buy_market payload: %w", err)
+	p, err := vm.DecodePayload[core.BuyMarketPayload](payload, core.TxBuyMarket)
+	if err != nil {
+		return err
 	}
 
 	listing, err := ctx.State.GetListing(p.ListingID)
@@ -85,14 +74,10 @@ func handleBuyMarket(ctx *vm.Context, payload json.RawMessage) error {
 	if listing.Seller == ctx.EffectiveSender {
 		return fmt.Errorf("seller cannot buy their own listing: %w", core.ErrUnauthorized)
 	}
-
-	// Enforce delegation MaxAmount before debiting. No-op for direct tx
-	// (OnBehalfOf == "") and for grants with MaxAmount == 0 (unlimited).
 	if err := vm.ChargeDelegationAmount(ctx, listing.Price); err != nil {
 		return err
 	}
 
-	// Deduct price from buyer
 	buyer, err := ctx.State.GetAccount(ctx.EffectiveSender)
 	if err != nil {
 		return err
@@ -105,7 +90,6 @@ func handleBuyMarket(ctx *vm.Context, payload json.RawMessage) error {
 		return err
 	}
 
-	// Credit seller
 	seller, err := ctx.State.GetAccount(listing.Seller)
 	if err != nil {
 		return err
@@ -119,7 +103,6 @@ func handleBuyMarket(ctx *vm.Context, payload json.RawMessage) error {
 		return err
 	}
 
-	// Transfer asset and clear its active listing marker.
 	asset, err := ctx.State.GetAsset(listing.AssetID)
 	if err != nil {
 		return fmt.Errorf("asset %q not found: %w", listing.AssetID, err)
@@ -130,33 +113,25 @@ func handleBuyMarket(ctx *vm.Context, payload json.RawMessage) error {
 		return err
 	}
 
-	// Deactivate listing
 	listing.Active = false
 	if err := ctx.State.SetListing(listing); err != nil {
 		return err
 	}
 
-	if ctx.Emitter != nil {
-		ctx.Emitter.Emit(events.Event{
-			Type:        events.EventMarketBuy,
-			TxID:        ctx.Tx.ID,
-			BlockHeight: ctx.Block.Header.Height,
-			Data: events.MarketBuyData{
-				ListingID: p.ListingID,
-				AssetID:   listing.AssetID,
-				Buyer:     ctx.EffectiveSender,
-				Seller:    listing.Seller,
-				Price:     listing.Price,
-			}.Map(),
-		})
-	}
+	ctx.Emit(events.EventMarketBuy, events.MarketBuyData{
+		ListingID: p.ListingID,
+		AssetID:   listing.AssetID,
+		Buyer:     ctx.EffectiveSender,
+		Seller:    listing.Seller,
+		Price:     listing.Price,
+	})
 	return nil
 }
 
 func handleCancelListing(ctx *vm.Context, payload json.RawMessage) error {
-	var p core.CancelListingPayload
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return fmt.Errorf("decode cancel_listing payload: %w", err)
+	p, err := vm.DecodePayload[core.CancelListingPayload](payload, core.TxCancelListing)
+	if err != nil {
+		return err
 	}
 
 	listing, err := ctx.State.GetListing(p.ListingID)
@@ -170,13 +145,10 @@ func handleCancelListing(ctx *vm.Context, payload json.RawMessage) error {
 		return fmt.Errorf("only the seller can cancel a listing: %w", core.ErrUnauthorized)
 	}
 
-	// Deactivate listing.
 	listing.Active = false
 	if err := ctx.State.SetListing(listing); err != nil {
 		return err
 	}
-
-	// Clear the asset's active listing marker.
 	asset, err := ctx.State.GetAsset(listing.AssetID)
 	if err != nil {
 		return fmt.Errorf("asset %q not found: %w", listing.AssetID, err)
@@ -186,13 +158,6 @@ func handleCancelListing(ctx *vm.Context, payload json.RawMessage) error {
 		return err
 	}
 
-	if ctx.Emitter != nil {
-		ctx.Emitter.Emit(events.Event{
-			Type:        events.EventMarketCancel,
-			TxID:        ctx.Tx.ID,
-			BlockHeight: ctx.Block.Header.Height,
-			Data:        events.MarketCancelData{ListingID: p.ListingID, AssetID: listing.AssetID, Seller: listing.Seller}.Map(),
-		})
-	}
+	ctx.Emit(events.EventMarketCancel, events.MarketCancelData{ListingID: p.ListingID, AssetID: listing.AssetID, Seller: listing.Seller})
 	return nil
 }

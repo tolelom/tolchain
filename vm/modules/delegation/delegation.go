@@ -9,10 +9,13 @@ import (
 	"github.com/tolelom/tolchain/vm"
 )
 
+// Delegation txs are signed by the granter itself (Tx.From); the executor
+// refuses to run them on someone's behalf.
+
 func handleGrantDelegation(ctx *vm.Context, payload json.RawMessage) error {
-	var p core.GrantDelegationPayload
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return fmt.Errorf("decode grant_delegation payload: %w", err)
+	p, err := vm.DecodePayload[core.GrantDelegationPayload](payload, core.TxGrantDelegation)
+	if err != nil {
+		return err
 	}
 	if err := vm.ValidatePubKey(p.Grantee, "grantee"); err != nil {
 		return err
@@ -42,26 +45,19 @@ func handleGrantDelegation(ctx *vm.Context, payload json.RawMessage) error {
 		return fmt.Errorf("store delegation grant: %w", err)
 	}
 
-	if ctx.Emitter != nil {
-		ctx.Emitter.Emit(events.Event{
-			Type:        events.EventDelegationGranted,
-			TxID:        ctx.Tx.ID,
-			BlockHeight: ctx.Block.Header.Height,
-			Data: events.DelegationGrantedData{
-				Granter:    ctx.Tx.From,
-				Grantee:    p.Grantee,
-				AllowTypes: p.AllowTypes,
-				ExpiresAt:  p.ExpiresAt,
-			}.Map(),
-		})
-	}
+	ctx.Emit(events.EventDelegationGranted, events.DelegationGrantedData{
+		Granter:    ctx.Tx.From,
+		Grantee:    p.Grantee,
+		AllowTypes: p.AllowTypes,
+		ExpiresAt:  p.ExpiresAt,
+	})
 	return nil
 }
 
 func handleRevokeDelegation(ctx *vm.Context, payload json.RawMessage) error {
-	var p core.RevokeDelegationPayload
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return fmt.Errorf("decode revoke_delegation payload: %w", err)
+	p, err := vm.DecodePayload[core.RevokeDelegationPayload](payload, core.TxRevokeDelegation)
+	if err != nil {
+		return err
 	}
 	if err := vm.ValidatePubKey(p.Grantee, "grantee"); err != nil {
 		return err
@@ -73,16 +69,6 @@ func handleRevokeDelegation(ctx *vm.Context, payload json.RawMessage) error {
 		return fmt.Errorf("delete delegation grant: %w", err)
 	}
 
-	if ctx.Emitter != nil {
-		ctx.Emitter.Emit(events.Event{
-			Type:        events.EventDelegationRevoked,
-			TxID:        ctx.Tx.ID,
-			BlockHeight: ctx.Block.Header.Height,
-			Data: events.DelegationRevokedData{
-				Granter: ctx.Tx.From,
-				Grantee: p.Grantee,
-			}.Map(),
-		})
-	}
+	ctx.Emit(events.EventDelegationRevoked, events.DelegationRevokedData{Granter: ctx.Tx.From, Grantee: p.Grantee})
 	return nil
 }
