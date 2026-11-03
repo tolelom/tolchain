@@ -7,6 +7,8 @@ import (
 	"github.com/tolelom/tolchain/events"
 )
 
+// RecoverTipState re-executes the tip block when the node stopped after
+// storing it but before committing its state. It reports whether it did.
 func (p *PoA) RecoverTipState() (bool, error) {
 	tip := p.bc.Tip()
 	if tip == nil || tip.Header.Height == 0 || tip.Header.StateRoot == "" {

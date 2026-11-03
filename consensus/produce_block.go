@@ -50,7 +50,6 @@ func (s *produceBlock) SelectTxs() error {
 	return nil
 }
 
-// Lock은 RPC 조회(읽기 잠금)가 반쯤 적용된 상태를 보지 못하게 블록 실행 쓰기 잠금을 잡는다.
 func (s *produceBlock) Lock() error {
 	s.p.state.BlockLock()
 	return nil
@@ -98,7 +97,6 @@ func (s *produceBlock) DiscardEvents() error {
 	return nil
 }
 
-// ExecuteTxs는 tx를 하나씩 실행하고 성공한 것만 남긴다. 실패한 tx는 건너뛴다.
 func (s *produceBlock) ExecuteTxs() error {
 	s.block = core.NewBlock(s.p.cfg.Genesis.ChainID, s.nextHeight, s.prevHash, s.p.pubKey.Hex(), s.candidates)
 	for _, tx := range s.candidates {
@@ -162,7 +160,6 @@ func (s *produceBlock) AddBlock() error {
 	return nil
 }
 
-// CommitState는 블록이 저장된 뒤에만 상태를 반영한다.
 func (s *produceBlock) CommitState() error {
 	return s.p.state.Commit()
 }
@@ -172,7 +169,6 @@ func (s *produceBlock) FlushEvents() error {
 	return nil
 }
 
-// EmitBlockCommit은 Sign 뒤라 block.Hash가 채워진 상태에서 보낸다.
 func (s *produceBlock) EmitBlockCommit() error {
 	s.p.emitter.Emit(events.Event{
 		Type:        events.EventBlockCommit,
