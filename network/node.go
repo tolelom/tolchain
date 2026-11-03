@@ -166,10 +166,16 @@ func (n *Node) PeerCount() int {
 }
 
 func (n *Node) Broadcast(msg Message) {
+	n.broadcastExcept(msg, nil)
+}
+
+func (n *Node) broadcastExcept(msg Message, skip *Peer) {
 	n.mu.RLock()
 	peers := make([]*Peer, 0, len(n.peers))
 	for _, p := range n.peers {
-		peers = append(peers, p)
+		if p != skip {
+			peers = append(peers, p)
+		}
 	}
 	n.mu.RUnlock()
 	for _, p := range peers {
@@ -180,12 +186,16 @@ func (n *Node) Broadcast(msg Message) {
 }
 
 func (n *Node) BroadcastTx(tx *core.Transaction) {
+	n.relayTx(tx, nil)
+}
+
+func (n *Node) relayTx(tx *core.Transaction, from *Peer) {
 	data, err := json.Marshal(tx)
 	if err != nil {
 		slog.Error("marshal tx", "component", "network", "error", err)
 		return
 	}
-	n.Broadcast(Message{Type: MsgTx, Payload: data})
+	n.broadcastExcept(Message{Type: MsgTx, Payload: data}, from)
 }
 
 func (n *Node) BroadcastBlock(block *core.Block) {
@@ -280,7 +290,7 @@ func (n *Node) readLoop(peer *Peer) {
 	}
 }
 
-func (n *Node) handleTx(_ *Peer, msg Message) {
+func (n *Node) handleTx(from *Peer, msg Message) {
 	var tx core.Transaction
 	if err := json.Unmarshal(msg.Payload, &tx); err != nil {
 		slog.Error("unmarshal tx", "component", "network", "error", err)
@@ -291,8 +301,13 @@ func (n *Node) handleTx(_ *Peer, msg Message) {
 		return
 	}
 	if err := n.mempool.Add(&tx); err != nil {
-		slog.Error("mempool add", "component", "network", "error", err)
+		if !errors.Is(err, core.ErrAlreadyExists) {
+			slog.Error("mempool add", "component", "network", "error", err)
+		}
+		return
 	}
+	// Only txs new to this node are passed on, so relaying cannot loop.
+	n.relayTx(&tx, from)
 }
 
 func (n *Node) handlePing(peer *Peer, _ Message) {

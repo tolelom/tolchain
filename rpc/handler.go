@@ -16,6 +16,7 @@ type Handler struct {
 	indexer *indexer.Indexer
 	chainID string
 	methods map[string]func(Request) Response
+	relayTx func(*core.Transaction)
 }
 
 func NewHandler(bc *core.Blockchain, mempool *core.Mempool, state core.State, idx *indexer.Indexer, chainID string) *Handler {
@@ -41,6 +42,12 @@ func NewHandler(bc *core.Blockchain, mempool *core.Mempool, state core.State, id
 		"getDelegationsByGrantee": h.getDelegationsByGrantee,
 	}
 	return h
+}
+
+// SetTxRelay sets where accepted txs are forwarded so that the next
+// proposer, not just this node, can include them.
+func (h *Handler) SetTxRelay(relay func(*core.Transaction)) {
+	h.relayTx = relay
 }
 
 func (h *Handler) Dispatch(req Request) Response {
@@ -271,6 +278,9 @@ func (h *Handler) sendTx(req Request) Response {
 	tx.ID = tx.Hash()
 	if err := h.mempool.Add(&tx); err != nil {
 		return errResponse(req.ID, CodeInternalError, err.Error())
+	}
+	if h.relayTx != nil {
+		h.relayTx(&tx)
 	}
 	return okResponse(req.ID, map[string]string{"tx_id": tx.ID})
 }
