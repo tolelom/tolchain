@@ -9,32 +9,25 @@ import (
 )
 
 const (
-	// rateLimitCleanupInterval controls how often stale entries are removed.
 	rateLimitCleanupInterval = 5 * time.Minute
-	// rateLimitEntryTTL is how long an idle IP entry is kept.
-	rateLimitEntryTTL = 10 * time.Minute
-
-	// CodeRateLimited is the JSON-RPC error code returned when rate limited.
-	CodeRateLimited = -32001
+	rateLimitEntryTTL        = 10 * time.Minute
 )
 
-// ipLimiter tracks per-IP token buckets for rate limiting.
+// ipLimiter is a token bucket per client IP.
 type ipLimiter struct {
 	mu      sync.Mutex
 	entries map[string]*bucket
 	rate    float64 // tokens per second
-	burst   int     // max tokens
+	burst   int
 	stopCh  chan struct{}
 	stopped sync.Once
 }
 
-// bucket is a simple token bucket for one IP.
 type bucket struct {
 	tokens   float64
 	lastTime time.Time
 }
 
-// newIPLimiter creates a rate limiter that allows rate requests/sec with burst capacity.
 func newIPLimiter(rate float64, burst int) *ipLimiter {
 	l := &ipLimiter{
 		entries: make(map[string]*bucket),
@@ -46,7 +39,6 @@ func newIPLimiter(rate float64, burst int) *ipLimiter {
 	return l
 }
 
-// allow checks if a request from ip is allowed.
 func (l *ipLimiter) allow(ip string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -58,7 +50,6 @@ func (l *ipLimiter) allow(ip string) bool {
 		l.entries[ip] = b
 	}
 
-	// Refill tokens based on elapsed time.
 	elapsed := now.Sub(b.lastTime).Seconds()
 	b.tokens += elapsed * l.rate
 	if b.tokens > float64(l.burst) {
@@ -73,12 +64,11 @@ func (l *ipLimiter) allow(ip string) bool {
 	return true
 }
 
-// stop terminates the background cleanup goroutine.
 func (l *ipLimiter) stop() {
 	l.stopped.Do(func() { close(l.stopCh) })
 }
 
-// cleanupLoop periodically removes stale entries.
+// cleanupLoop forgets idle IPs so the map cannot grow without bound.
 func (l *ipLimiter) cleanupLoop() {
 	ticker := time.NewTicker(rateLimitCleanupInterval)
 	defer ticker.Stop()
@@ -98,7 +88,6 @@ func (l *ipLimiter) cleanupLoop() {
 	}
 }
 
-// extractIP returns the IP portion of a RemoteAddr (strips port).
 func extractIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -107,9 +96,8 @@ func extractIP(r *http.Request) string {
 	return host
 }
 
-// parseTrustedNets converts a list of IPs/CIDRs into networks. A plain IP is
-// treated as a /32 (or /128 for IPv6). Malformed entries are skipped —
-// config.Validate rejects them before they can reach here.
+// parseTrustedNets treats a bare IP as a single-host network. Malformed
+// entries are skipped; config.Validate rejects them first.
 func parseTrustedNets(entries []string) []*net.IPNet {
 	nets := make([]*net.IPNet, 0, len(entries))
 	for _, e := range entries {
@@ -136,17 +124,9 @@ func parseTrustedNets(entries []string) []*net.IPNet {
 	return nets
 }
 
-// clientIP returns the client identity used for rate limiting.
-//
-// When the request's peer (RemoteAddr) belongs to one of the trusted proxy
-// networks and an X-Forwarded-For header is present, the LAST (rightmost)
-// hop of the header is used: that is the address the trusted proxy itself
-// appended — the only value it vouches for. Earlier (leftmost) entries are
-// client-controlled and trivially spoofable, so they are never used.
-//
-// With trusted empty (the default), or for any peer outside the trusted
-// networks, X-Forwarded-For is ignored and RemoteAddr is used, preserving
-// the original behavior for directly exposed nodes.
+// clientIP is the rate-limit identity: RemoteAddr, or, when RemoteAddr is a
+// trusted proxy, the rightmost X-Forwarded-For hop. Only that hop was added
+// by the proxy; everything left of it is client-controlled.
 func clientIP(r *http.Request, trusted []*net.IPNet) string {
 	remote := extractIP(r)
 	if len(trusted) == 0 {
@@ -173,8 +153,6 @@ func clientIP(r *http.Request, trusted []*net.IPNet) string {
 	hops := strings.Split(xff, ",")
 	last := strings.TrimSpace(hops[len(hops)-1])
 	if net.ParseIP(last) == nil {
-		// Malformed forwarded value: fall back to the proxy address rather
-		// than letting garbage become a rate-limit key.
 		return remote
 	}
 	return last

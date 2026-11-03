@@ -8,21 +8,19 @@ import (
 	"github.com/tolelom/tolchain/core"
 )
 
-// Handler is the function signature every transaction module must implement.
 type Handler func(ctx *Context, payload json.RawMessage) error
 
-// Registry maps TxTypes to Handlers. Thread-safe for concurrent registration.
 type Registry struct {
 	mu       sync.RWMutex
 	handlers map[core.TxType]Handler
 }
 
-// NewRegistry creates an empty Registry.
 func NewRegistry() *Registry {
 	return &Registry{handlers: make(map[core.TxType]Handler)}
 }
 
-// Register associates typ with h. Panics on duplicate registration.
+// Register panics on a duplicate type: two modules claiming one tx type is a
+// build error.
 func (r *Registry) Register(typ core.TxType, h Handler) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -32,7 +30,6 @@ func (r *Registry) Register(typ core.TxType, h Handler) {
 	r.handlers[typ] = h
 }
 
-// Execute dispatches payload to the handler registered for typ.
 func (r *Registry) Execute(typ core.TxType, ctx *Context, payload json.RawMessage) error {
 	r.mu.RLock()
 	h, ok := r.handlers[typ]
@@ -43,11 +40,9 @@ func (r *Registry) Execute(typ core.TxType, ctx *Context, payload json.RawMessag
 	return h(ctx, payload)
 }
 
-// globalRegistry is the package-level singleton that modules register into.
 var globalRegistry = NewRegistry()
 
-// Register adds a handler to the global registry.
-// Module init() functions call this to self-register.
+// Register is called from module init functions (generated register.gen.go).
 func Register(typ core.TxType, h Handler) {
 	globalRegistry.Register(typ, h)
 }
