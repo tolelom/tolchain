@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -32,10 +33,13 @@ type Message struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-// Peer represents a connected remote node.
+// Peer is a connected remote node.
 type Peer struct {
-	ID   string
 	Addr string
+
+	// id changes once the peer announces its node_id, while other goroutines
+	// may be logging it.
+	id atomic.Pointer[string]
 
 	conn           net.Conn
 	mu             sync.Mutex
@@ -48,15 +52,20 @@ type Peer struct {
 // NewPeer wraps an established TCP connection as a Peer.
 // writeTimeoutSec, readTimeoutSec, maxMsgSize configure per-peer limits.
 func NewPeer(id, addr string, conn net.Conn, writeTimeoutSec, readTimeoutSec, maxMsgSize int) *Peer {
-	return &Peer{
-		ID:             id,
+	p := &Peer{
 		Addr:           addr,
 		conn:           conn,
 		writeTimeout:   time.Duration(writeTimeoutSec) * time.Second,
 		readTimeout:    time.Duration(readTimeoutSec) * time.Second,
 		maxMessageSize: uint32(maxMsgSize),
 	}
+	p.setID(id)
+	return p
 }
+
+func (p *Peer) ID() string { return *p.id.Load() }
+
+func (p *Peer) setID(id string) { p.id.Store(&id) }
 
 // Connect dials the remote address and returns a connected Peer.
 // If tlsCfg is non-nil the connection is established over TLS.
@@ -83,7 +92,7 @@ func (p *Peer) Send(msg Message) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
-		return fmt.Errorf("peer %s closed", p.ID)
+		return fmt.Errorf("peer %s closed", p.ID())
 	}
 	if err := p.conn.SetWriteDeadline(time.Now().Add(p.writeTimeout)); err != nil {
 		return fmt.Errorf("set write deadline: %w", err)

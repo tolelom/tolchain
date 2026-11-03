@@ -32,8 +32,8 @@ func TestReKeyPeer_CollisionCleanupKeepsLivePeer(t *testing.T) {
 	peerB := NewPeer("addrB", "addrB", connB, 5, 5, 1<<20)
 
 	n.mu.Lock()
-	n.peers[peerA.ID] = peerA
-	n.peers[peerB.ID] = peerB
+	n.peers[peerA.ID()] = peerA
+	n.peers[peerB.ID()] = peerB
 	n.mu.Unlock()
 
 	// Service peer A's connection like acceptLoop would.
@@ -68,7 +68,7 @@ func TestReadLoop_CleanupRemovesOwnEntry(t *testing.T) {
 	peer := NewPeer("node-x", "addrX", conn, 5, 5, 1<<20)
 
 	n.mu.Lock()
-	n.peers[peer.ID] = peer
+	n.peers[peer.ID()] = peer
 	n.mu.Unlock()
 
 	done := make(chan struct{})
@@ -88,4 +88,35 @@ func TestReadLoop_CleanupRemovesOwnEntry(t *testing.T) {
 	if got := n.Peer("node-x"); got != nil {
 		t.Fatalf("dead peer should be removed from the peer map, got %v", got)
 	}
+}
+
+// ReKeyPeer runs on the peer's read goroutine while broadcasts from other
+// goroutines read the peer's ID; run with -race.
+func TestReKeyPeer_ConcurrentWithBroadcast(t *testing.T) {
+	n := newTestNode()
+	conn, remote := net.Pipe()
+	defer func() { _ = remote.Close() }()
+	peer := NewPeer("addr", "addr", conn, 5, 5, 1<<20)
+	peer.Close()
+	n.mu.Lock()
+	n.peers["addr"] = peer
+	n.mu.Unlock()
+
+	start, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		<-start
+		for i := 0; i < 1000; i++ {
+			n.Broadcast(Message{Type: MsgPing})
+		}
+	}()
+	close(start)
+	for i := 0; i < 1000; i++ {
+		from, to := "addr", "node-1"
+		if i%2 == 1 {
+			from, to = to, from
+		}
+		n.ReKeyPeer(from, to)
+	}
+	<-done
 }

@@ -165,7 +165,7 @@ func (n *Node) ReKeyPeer(oldID, newID string) {
 			"component", "network", "old_id", oldID, "new_id", newID, "existing_addr", existing.Addr)
 		existing.Close()
 	}
-	p.ID = newID
+	p.setID(newID)
 	n.peers[newID] = p
 	n.mu.Unlock()
 }
@@ -187,7 +187,7 @@ func (n *Node) Broadcast(msg Message) {
 	n.mu.RUnlock()
 	for _, p := range peers {
 		if err := p.Send(msg); err != nil {
-			slog.Error("broadcast failed", "component", "network", "peer", p.ID, "error", err)
+			slog.Error("broadcast failed", "component", "network", "peer", p.ID(), "error", err)
 		}
 	}
 }
@@ -242,7 +242,7 @@ func (n *Node) acceptLoop() {
 			continue
 		}
 		peer := NewPeer(id, id, conn, n.writeTimeoutSec, n.readTimeoutSec, n.maxMessageSize)
-		n.peers[peer.ID] = peer
+		n.peers[peer.ID()] = peer
 		n.mu.Unlock()
 		metrics.PeersConnected.Inc()
 		go n.readLoop(peer)
@@ -252,7 +252,7 @@ func (n *Node) acceptLoop() {
 func (n *Node) readLoop(peer *Peer) {
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("readLoop panic", "component", "network", "peer", peer.ID, "panic", r, "stack", string(debug.Stack()))
+			slog.Error("readLoop panic", "component", "network", "peer", peer.ID(), "panic", r, "stack", string(debug.Stack()))
 		}
 		peer.Close()
 		n.mu.Lock()
@@ -260,8 +260,8 @@ func (n *Node) readLoop(peer *Peer) {
 		// ReKeyPeer collision the key may now hold a live re-keyed peer, and
 		// deleting it would create a ghost peer that no longer receives
 		// broadcasts.
-		if n.peers[peer.ID] == peer {
-			delete(n.peers, peer.ID)
+		if n.peers[peer.ID()] == peer {
+			delete(n.peers, peer.ID())
 		}
 		n.mu.Unlock()
 		metrics.PeersConnected.Dec()
@@ -282,7 +282,7 @@ func (n *Node) readLoop(peer *Peer) {
 			msgCount = 1 // the message just received counts toward the new window
 			lastReset = time.Now()
 		} else if msgCount > 100 {
-			slog.Warn("peer rate limit exceeded, disconnecting", "component", "network", "peer", peer.ID, "msgs_per_sec", msgCount)
+			slog.Warn("peer rate limit exceeded, disconnecting", "component", "network", "peer", peer.ID(), "msgs_per_sec", msgCount)
 			return
 		}
 
@@ -313,6 +313,6 @@ func (n *Node) handleTx(_ *Peer, msg Message) {
 
 func (n *Node) handlePing(peer *Peer, _ Message) {
 	if err := peer.Send(Message{Type: MsgPong}); err != nil {
-		slog.Error("pong failed", "component", "network", "peer", peer.ID, "error", err)
+		slog.Error("pong failed", "component", "network", "peer", peer.ID(), "error", err)
 	}
 }

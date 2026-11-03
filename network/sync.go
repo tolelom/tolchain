@@ -65,18 +65,18 @@ func (s *Syncer) handleHello(peer *Peer, msg Message) {
 	}
 	if msg.Payload != nil {
 		if err := json.Unmarshal(msg.Payload, &hello); err != nil {
-			slog.Warn("malformed hello payload", "component", "sync", "peer", peer.ID, "error", err)
+			slog.Warn("malformed hello payload", "component", "sync", "peer", peer.ID(), "error", err)
 		}
 	}
-	if hello.NodeID != "" && hello.NodeID != peer.ID {
-		oldID := peer.ID
+	if hello.NodeID != "" && hello.NodeID != peer.ID() {
+		oldID := peer.ID()
 		s.node.ReKeyPeer(oldID, hello.NodeID)
 		slog.Info("peer re-keyed after hello", "component", "sync", "old_id", oldID, "new_id", hello.NodeID)
 	}
 
 	fromHeight := s.bc.Height() + 1
 	if err := s.RequestBlocks(peer, fromHeight); err != nil {
-		slog.Error("failed to request blocks", "component", "sync", "peer", peer.ID, "error", err)
+		slog.Error("failed to request blocks", "component", "sync", "peer", peer.ID(), "error", err)
 	}
 }
 
@@ -85,7 +85,7 @@ func (s *Syncer) handleHello(peer *Peer, msg Message) {
 func (s *Syncer) SyncWithPeer(peer *Peer) {
 	fromHeight := s.bc.Height() + 1
 	if err := s.RequestBlocks(peer, fromHeight); err != nil {
-		slog.Error("failed to request blocks", "component", "sync", "peer", peer.ID, "error", err)
+		slog.Error("failed to request blocks", "component", "sync", "peer", peer.ID(), "error", err)
 	}
 }
 
@@ -101,7 +101,7 @@ func (s *Syncer) RequestBlocks(peer *Peer, fromHeight int64) error {
 func (s *Syncer) handleGetBlocks(peer *Peer, msg Message) {
 	var req GetBlocksRequest
 	if err := json.Unmarshal(msg.Payload, &req); err != nil {
-		slog.Error("unmarshal GetBlocks request", "component", "sync", "peer", peer.ID, "error", err)
+		slog.Error("unmarshal GetBlocks request", "component", "sync", "peer", peer.ID(), "error", err)
 		return
 	}
 	if req.Limit <= 0 || req.Limit > s.maxSyncBatchSize {
@@ -114,14 +114,14 @@ func (s *Syncer) handleGetBlocks(peer *Peer, msg Message) {
 		return
 	}
 	if err := peer.Send(Message{Type: MsgBlocks, Payload: data}); err != nil {
-		slog.Error("send blocks failed", "component", "sync", "peer", peer.ID, "error", err)
+		slog.Error("send blocks failed", "component", "sync", "peer", peer.ID(), "error", err)
 	}
 }
 
 func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 	var resp BlocksResponse
 	if err := json.Unmarshal(msg.Payload, &resp); err != nil {
-		slog.Error("unmarshal Blocks response", "component", "sync", "peer", peer.ID, "error", err)
+		slog.Error("unmarshal Blocks response", "component", "sync", "peer", peer.ID(), "error", err)
 		return
 	}
 	for _, b := range resp.Blocks {
@@ -138,7 +138,7 @@ func (s *Syncer) handleBlocks(peer *Peer, msg Message) {
 	if len(resp.Blocks) >= s.syncBatchSize {
 		nextHeight := s.bc.Height() + 1
 		if err := s.RequestBlocks(peer, nextHeight); err != nil {
-			slog.Error("follow-up request failed", "component", "sync", "peer", peer.ID, "error", err)
+			slog.Error("follow-up request failed", "component", "sync", "peer", peer.ID(), "error", err)
 		}
 	}
 }
