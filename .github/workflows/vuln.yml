@@ -1,0 +1,26 @@
+name: vuln
+
+# 알려진 취약점이 실제 호출 경로에 있으면 실패한다. 의존성은 그대로여도 새 공지가
+# 나올 수 있어 주 1회도 돈다. 표준 라이브러리 취약점은 최신 stable Go 기준으로 본다.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
