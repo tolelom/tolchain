@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
 ARG TARGETARCH
 RUN apk add --no-cache git
 WORKDIR /src
@@ -7,7 +7,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOARCH=$TARGETARCH go build -ldflags "-s -w" -o /tolchain-node ./cmd/node
 
-FROM alpine:3.19
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates curl
 RUN adduser -D -u 1000 tol
 COPY --from=builder /tolchain-node /usr/local/bin/tolchain-node
