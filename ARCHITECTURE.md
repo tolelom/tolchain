@@ -1,4 +1,4 @@
-# TOL Chain — 코드 구조 분석
+# TOL Chain 코드 구조
 
 ## 프로젝트 개요
 
@@ -41,7 +41,7 @@ tolchain/
 
 ## 패키지별 상세
 
-### 1. `core/` (4파일, 374줄) — 핵심 데이터 구조
+### 1. `core/` (4파일, 374줄): 핵심 데이터 구조
 
 | 파일 | 핵심 타입/함수 | 설명 |
 |------|---------------|------|
@@ -58,16 +58,16 @@ tolchain/
 - `Session`: Players, Stakes, Status("open"/"closed"), Outcome(pubkey→reward)
 - `MarketListing`: AssetID, Seller, Price, Active
 
-### 2. `crypto/` (3파일, 113줄) — 암호화
+### 2. `crypto/` (3파일, 113줄): 암호화
 
 | 파일 | 설명 |
 |------|------|
 | `keys.go` | ed25519 키 생성. `Address()` = SHA-256 앞 20바이트 hex (40자) |
-| `signature.go` | `Sign()`, `Verify()` — ed25519 서명/검증 |
-| `hash.go` | `Hash()` — SHA-256 hex 문자열 |
+| `signature.go` | `Sign()`, `Verify()`: ed25519 서명/검증 |
+| `hash.go` | `Hash()`: SHA-256 hex 문자열 |
 | `certgen/certgen.go` | mTLS용 자체서명 CA/노드 인증서 생성 (P256, TLS 1.3) |
 
-### 3. `storage/` (3파일, 518줄) — 저장소
+### 3. `storage/` (3파일, 518줄): 저장소
 
 | 파일 | 설명 |
 |------|------|
@@ -84,22 +84,22 @@ tolchain/
 커밋: dirty/deleted → DB 원자적 배치 쓰기
 ```
 
-### 4. `consensus/` (1파일, 182줄) — PoA 합의
+### 4. `consensus/` (1파일, 182줄): PoA 합의
 
 - **라운드로빈:** `validators[height % len(validators)]`로 제안자 결정
 - **블록 생산 순서:** 스냅샷 → 실행 → 상태루트 계산 → 서명 → 블록체인 추가 → 상태 커밋
 - **검증:** 제안자 확인, 서명 검증, TxRoot 확인, height/hash 연속성
 - **실행 루프:** 2초 간격으로 IsProposer 체크
 
-### 5. `vm/` + `vm/modules/` (6파일, 600+줄) — 실행 엔진
+### 5. `vm/` + `vm/modules/` (6파일, 600+줄): 실행 엔진
 
-**vm/registry.go** — 글로벌 핸들러 레지스트리 (싱글톤, init() 자동 등록)
+**vm/registry.go**: 글로벌 핸들러 레지스트리 (싱글톤, init() 자동 등록)
 
-**vm/executor.go** — 트랜잭션 실행기
+**vm/executor.go**: 트랜잭션 실행기
 - 수수료 선차감 → 논스 검증 → 핸들러 디스패치
 - 실패 시 스냅샷 롤백
 
-**vm/context.go, vm/helpers.go** — 핸들러가 쓰는 `Context`(`Emit`로 이벤트 발행), `DecodePayload`, `RequireOperator`, `ChargeDelegationAmount`
+**vm/context.go, vm/helpers.go**: 핸들러가 쓰는 `Context`(`Emit`로 이벤트 발행), `DecodePayload`, `RequireOperator`, `ChargeDelegationAmount`
 
 **모듈별 핸들러:**
 
@@ -115,20 +115,20 @@ tolchain/
 | `session/session.go` | handleSessionOpen | 플레이어 스테이크 잠금, 세션 생성 |
 | | handleSessionResult | 결과 제출(생성자만), 보상 분배 |
 
-### 6. `events/` (1파일, 71줄) — 이벤트 시스템
+### 6. `events/` (1파일, 71줄): 이벤트 시스템
 
 - 이벤트 타입: BlockCommit, TxExecuted, TokenTransfer, Asset*, Template*, Session*, Market*
 - `Emit()`: 동기 호출, 핸들러별 panic recovery
 - core/vm에 의존하지 않음
 
-### 7. `indexer/` (1파일, 143줄) — 보조 인덱스
+### 7. `indexer/` (1파일, 143줄): 보조 인덱스
 
 - 이벤트 구독으로 자동 갱신
 - `GetAssetsByOwner(owner)`: 소유자별 자산 ID 목록
 - `GetSessionsByPlayer(player)`: 플레이어별 세션 목록
 - 키: "idx:owner:asset:<owner>" → JSON 배열
 
-### 8. `network/` (3파일, 371줄) — P2P 네트워킹
+### 8. `network/` (3파일, 371줄): P2P 네트워킹
 
 | 파일 | 설명 |
 |------|------|
@@ -136,13 +136,13 @@ tolchain/
 | `node.go` | 피어 관리. 최대 50개. Broadcast, 메시지 핸들러 등록. RPC로 받은 tx와 피어에게 처음 받은 tx를 다른 피어에 전달 |
 | `sync.go` | 블록 동기화. 최대 200블록 배치. 실패 시 상태 롤백 |
 
-### 9. `rpc/` (3파일, 330줄) — JSON-RPC 서버
+### 9. `rpc/` (3파일, 330줄): JSON-RPC 서버
 
 **API 메서드:**
 
 | 메서드 | 파라미터 | 반환 |
 |--------|---------|------|
-| `getBlockHeight` | — | 현재 높이 (int64) |
+| `getBlockHeight` | - | 현재 높이 (int64) |
 | `getBlock` | hash 또는 height | Block |
 | `getBalance` | address | {address, balance, nonce} |
 | `getAsset` | id | Asset |
@@ -150,24 +150,24 @@ tolchain/
 | `getListing` | id | MarketListing |
 | `getAssetsByOwner` | owner | []string |
 | `sendTx` | Transaction | {tx_id} |
-| `getMempoolSize` | — | 개수 (int64) |
+| `getMempoolSize` | - | 개수 (int64) |
 
 - Bearer 토큰 인증 (선택)
 - 1MB 요청 크기 제한
 - `Dispatch()`로 HTTP 없이 직접 테스트 가능
 
-### 10. `wallet/` (2파일, 163줄) — 지갑
+### 10. `wallet/` (2파일, 163줄): 지갑
 
 - `wallet.go`: 키 쌍 래퍼. `NewTx()`, `Transfer()` 헬퍼
 - `keystore.go`: AES-GCM 암호화 + PBKDF2 (100,000회). JSON 포맷 (PubKey, Salt, Nonce, CipherText)
 
-### 11. `config/` (3파일, 207줄) — 설정
+### 11. `config/` (3파일, 207줄): 설정
 
 - `config.go`: JSON 설정 로드/검증. NodeID, 포트, 밸리데이터, TLS, 시드피어
 - `genesis.go`: 제네시스 블록 생성 (초기 잔액 할당, 상태루트 계산)
 - `tls.go`: mTLS 설정 로드 (TLS 1.3, 클라이언트 인증서 필수)
 
-### 12. `cmd/node/` (1파일, 213줄) — 진입점
+### 12. `cmd/node/` (1파일, 213줄): 진입점
 
 **시작 순서:**
 1. 플래그 파싱 (-config, -key, -genkey, -gencerts)
@@ -210,7 +210,7 @@ cmd/node  ← 모든 패키지 조합
 ## 핵심 설계 패턴
 
 ### 1. 인터페이스 기반 아키텍처
-- `core.State`, `core.BlockStore`, `storage.DB` — 구현체 교체 가능
+- `core.State`, `core.BlockStore`, `storage.DB`: 구현체 교체 가능
 - 테스트: MemDB/MemBlockStore, 프로덕션: LevelDB
 
 ### 2. Write Buffer + 스냅샷/롤백
