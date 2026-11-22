@@ -17,7 +17,19 @@ go test ./tests/ -v
 go vet ./...
 ```
 
-Requires **Go 1.24+**.
+Requires **Go 1.26+**.
+
+The Makefile wraps the same steps and adds cross-compile targets:
+
+```bash
+make build              # current OS/arch -> tolchain-node
+make darwin-arm64       # macOS Apple Silicon
+make linux-amd64        # Linux x86_64
+make test               # go test ./...
+make vet                # go vet ./...
+```
+
+CI runs gofmt, `go mod tidy -diff`, vet, tests with a coverage gate, and on `main` builds and pushes the GHCR image.
 
 ## Code Style
 
