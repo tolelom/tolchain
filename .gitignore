@@ -1,12 +1,9 @@
 # IDE
-.idea/
 .vscode/
 *.swp
 
 # Chain data
 /data/
-/bin/
-/keystore/
 
 # Secrets
 *.key
