@@ -19,10 +19,11 @@ fi
 set -a; source .env; set +a
 : "${TOL_PASSWORD:?TOL_PASSWORD가 .env에 설정되어야 합니다}"
 
-# ── 2. Docker 이미지 빌드 ────────────────────────────────────────
+# ── 2. Docker 이미지 받기 (docker-compose.yml과 같은 이미지) ─────
+IMAGE=ghcr.io/tolelom/tolchain:latest
 echo ""
-echo "Docker 이미지 빌드 중..."
-docker build -t tolchain-node:latest .
+echo "Docker 이미지 받는 중: $IMAGE"
+docker pull "$IMAGE"
 
 # ── 3. 검증자 키 생성 ────────────────────────────────────────────
 PUBKEY=""
@@ -31,12 +32,12 @@ if [ ! -f validator.key ]; then
     echo "검증자 키 생성 중..."
     TMPOUT=$(mktemp)
 
-    CID=$(docker create -e TOL_PASSWORD tolchain-node:latest --genkey --key validator.key)
+    CID=$(docker create -e TOL_PASSWORD "$IMAGE" --genkey --key validator.key)
     docker start -a "$CID" 2>&1 | tee "$TMPOUT"
     docker cp "$CID:/home/tol/validator.key" ./validator.key
     docker rm "$CID" >/dev/null
 
-    PUBKEY=$(grep "Public key" "$TMPOUT" | awk '{print $NF}')
+    PUBKEY=$(sed -n 's/.*"msg":"key generated".*"pubkey":"\([0-9a-f]\{64\}\)".*/\1/p' "$TMPOUT")
     rm -f "$TMPOUT"
 
     [ -n "$PUBKEY" ] || { echo "오류: 공개 키 추출 실패"; exit 1; }
