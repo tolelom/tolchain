@@ -1,12 +1,8 @@
-# IDE
-.idea/
-.vscode/
-*.swp
-
 # Chain data
 /data/
-/bin/
-/keystore/
+
+# Build output
+/tolchain-node*
 
 # Secrets
 *.key
@@ -21,3 +17,6 @@ vendor/
 *.test
 *.out
 node.exe
+
+# Claude Code 로컬 설정
+.claude/settings.local.json
