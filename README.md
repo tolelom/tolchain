@@ -70,8 +70,8 @@ Docker로 노드, Prometheus, Grafana를 함께 띄울 때는 `./scripts/setup.s
 
 | 문서 | 내용 |
 |---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 패키지 구성, 설계 패턴, 트랜잭션 처리 흐름 |
 | [docs/reference.md](docs/reference.md) | 설정, RPC API, 트랜잭션 종류, 이벤트, 메트릭, 보안, 게임 연동 예시 |
-| [CODE_STRUCTURE.md](CODE_STRUCTURE.md) | 코드 구조 해설 |
 
 ## 기여
 
