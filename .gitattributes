@@ -1,1 +1,4 @@
 * text=auto
+
+# 골든은 바이트 그대로 비교한다. autocrlf가 줄바꿈을 바꾸면 비교가 깨진다.
+tests/testdata/golden_*.txt -text

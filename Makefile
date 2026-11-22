@@ -3,7 +3,7 @@ CMD      := ./cmd/node
 VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test vet clean darwin-arm64
+.PHONY: build test vet clean darwin-arm64 linux-amd64
 
 ## build: compile for current OS/arch
 build:
