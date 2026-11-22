@@ -1,273 +1,75 @@
-# TOL Chain 코드 구조
+# 아키텍처
 
-## 프로젝트 개요
+## 구성
 
-**TOL Chain**은 MMORPG/로그라이크 게임을 위한 Go 블록체인입니다. PoA(Proof-of-Authority) 합의, 온체인 자산 관리, 게임 세션 스테이킹, P2P 자산 거래를 지원합니다.
-
-- **모듈 경로:** `github.com/tolelom/tolchain`
-- **Go 버전:** 1.22
-- **Go 파일:** 38개, 약 4,369줄
-- **외부 의존성:** goleveldb, x/crypto
-
----
-
-## 디렉토리 구조
-
-```
-tolchain/
-├── cmd/node/              # 노드 부트스트랩 및 진입점 (main.go)
-├── config/                # 설정, 제네시스, TLS 로딩
-├── consensus/             # PoA 합의 엔진 (라운드로빈)
-├── core/                  # 핵심 타입 (Transaction, Block, State, Mempool)
-├── crypto/                # ed25519 서명, SHA-256 해시
-│   └── certgen/           # TLS 인증서 생성
-├── events/                # 이벤트 Pub/Sub 시스템
-├── indexer/               # 보조 인덱스 (owner→assets, player→sessions)
-├── internal/testutil/     # 테스트 전용 인메모리 DB
-├── network/               # TCP P2P 네트워킹 (length-prefix + JSON)
-├── rpc/                   # JSON-RPC 2.0 HTTP 서버
-├── storage/               # LevelDB + StateDB (스냅샷/롤백)
-├── tests/                 # 통합 테스트
-├── vm/                    # 트랜잭션 실행 엔진
-│   └── modules/           # 플러그형 핸들러
-│       ├── asset/         # 자산 발행/소각/전송
-│       ├── economy/       # 토큰 전송
-│       ├── market/        # 마켓플레이스
-│       └── session/       # 게임 세션
-└── wallet/                # 키 생성, 암호화 키스토어, Tx 빌더
+```text
+게임 서버 ── JSON-RPC sendTx ──▶ rpc ──▶ Mempool
+                                           │ 블록 간격마다, 제안자일 때
+                                           ▼
+피어 ── P2P 블록 ──▶ network        consensus
+                  apply_block       produce_block
+                        │                 │
+                        └────────┬────────┘
+                                 ▼
+                 vm.Executor ──▶ vm/modules/* 핸들러
+                                 │
+                                 ▼
+                 StateDB (쓰기 버퍼, 스냅샷) ── 커밋 ──▶ LevelDB
+                                 │
+                                 ▼ 상태 커밋 뒤 이벤트 flush
+                 events.Emitter ──▶ indexer, SSE /events, 블록 전파·pruning
 ```
 
----
+블록은 두 경로로 들어옵니다. 제안자 차례인 노드는 mempool에서 tx를 골라 produce_block으로 블록을 만들고, 다른 노드는 피어에게 받은 블록을 apply_block으로 적용합니다. 두 흐름 모두 같은 Executor와 StateDB를 거칩니다.
 
-## 패키지별 상세
+## 코드 지도
 
-### 1. `core/` (4파일, 374줄): 핵심 데이터 구조
+의존 방향은 `design/tolchain.yaml`의 계층 foundation → domain → persistence → execution → service를 따릅니다.
 
-| 파일 | 핵심 타입/함수 | 설명 |
-|------|---------------|------|
-| `transaction.go` | `Transaction`, `TxType`, `Hash()`, `Sign()`, `Verify()` | 트랜잭션 구조체. From = 64자 hex pubkey. 9가지 TxType (transfer, mint_asset 등) |
-| `block.go` | `Block`, `BlockHeader`, `ComputeHash()`, `ComputeTxRoot()` | 블록 구조체. Length-prefix TxRoot로 경계 모호성 방지 |
-| `blockchain.go` | `BlockStore` 인터페이스, `Blockchain`, `AddBlock()` | 블록 체인 관리. RWMutex 동시성. 원자적 커밋 |
-| `mempool.go` | `Mempool`, `Add()`, `Pending()` | 대기 트랜잭션 풀. 최대 10,000개. 타임스탬프 ±1시간 검증 |
-| `state.go` | `State` 인터페이스, `Account`, `Asset`, `Session`, `MarketListing` | 상태 인터페이스 정의. 스냅샷/롤백/커밋 지원 |
+| 경로 | 책임 |
+|---|---|
+| `cmd/node/` | 노드 진입점. 설정·키 읽기, 체인 열기, tip 상태 복구, P2P·RPC·합의 루프 시작, 종료 처리 |
+| `cmd/genkey/` | 검증자 키 쌍 생성 |
+| `cmd/backup/` | 멈춘 노드의 LevelDB를 읽기 전용으로 열어 상태를 JSON으로 내보내기 |
+| `config/` | 설정 읽기와 검증, 제네시스, mTLS 설정 |
+| `core/` | Transaction, Block, Blockchain, Mempool, State 인터페이스, 세션 동의 메시지 형식 |
+| `crypto/` | ed25519 서명, SHA-256, 주소. `certgen/`은 mTLS 인증서 생성 |
+| `storage/` | LevelDB, StateDB(쓰기 버퍼, 스냅샷 스택, 상태 루트), 오래된 블록 pruning |
+| `vm/` | Executor(위임 확인, 수수료·nonce, 핸들러 호출, tx별 스냅샷), 핸들러 레지스트리 |
+| `vm/modules/` | tx 핸들러 그룹: economy, asset, market, session, inventory, random, delegation, reward |
+| `consensus/` | PoA 라운드 로빈, produce_block 단계 본문, 재시작 때 tip 상태 복구 |
+| `network/` | TCP P2P(길이 접두사 JSON, mTLS 선택), 피어 관리, 블록 동기화, apply_block 단계 본문 |
+| `events/` | 이벤트 Emitter, 블록 실행 중 이벤트를 모으는 Buffer |
+| `indexer/` | 이벤트로 갱신하는 보조 인덱스: 소유자별 자산, 플레이어별 세션, 활성 등록, tx 결과 |
+| `rpc/` | JSON-RPC 2.0, Bearer 인증, IP별 rate limit, SSE `/events`, `/status`, `/metrics` |
+| `metrics/` | Prometheus 지표 정의 |
+| `wallet/` | 암호화 키스토어(AES-GCM, PBKDF2), tx 빌더 |
+| `design/` | daemok 설계 파일 `tolchain.yaml` |
+| `tests/` | 통합 테스트, 벤치마크, golden 파일(`tests/testdata/`) |
+| `internal/testutil/` | 테스트용 인메모리 DB |
+| `monitoring/`, `scripts/` | Prometheus 설정, Docker 배포 준비 스크립트 `setup.sh` |
 
-**주요 타입:**
-- `Account`: Address, Balance(uint64), Nonce
-- `Asset`: ID, TemplateID, Owner, Properties(map), Tradeable, ActiveListingID
-- `AssetTemplate`: ID, Name, Schema(속성 제약), Creator
-- `Session`: Players, Stakes, Status("open"/"closed"), Outcome(pubkey→reward)
-- `MarketListing`: AssetID, Seller, Price, Active
+`design/tolchain.yaml`은 tx 타입, 이벤트 타입과 payload, 모듈과 의존, 블록 생성·적용 흐름의 기준입니다. `daemok gen`이 여기서 다음 파일을 만듭니다.
 
-### 2. `crypto/` (3파일, 113줄): 암호화
-
-| 파일 | 설명 |
-|------|------|
-| `keys.go` | ed25519 키 생성. `Address()` = SHA-256 앞 20바이트 hex (40자) |
-| `signature.go` | `Sign()`, `Verify()`: ed25519 서명/검증 |
-| `hash.go` | `Hash()`: SHA-256 hex 문자열 |
-| `certgen/certgen.go` | mTLS용 자체서명 CA/노드 인증서 생성 (P256, TLS 1.3) |
-
-### 3. `storage/` (3파일, 518줄): 저장소
-
-| 파일 | 설명 |
-|------|------|
-| `db.go` | `DB`, `Iterator`, `Batch` 인터페이스 (범용 KV 스토어) |
-| `leveldb.go` | LevelDB 구현 + `LevelBlockStore`. 키: "block:", "height:", "chain:tip" |
-| `statedb.go` | **가장 큰 파일(318줄)**. Write buffer + 스냅샷 스택. 접두사: "acct:", "asset:", "tmpl:", "sess:", "list:". `ComputeRoot()`: 전체 키 정렬 → length-prefix → SHA-256 |
-
-**StateDB 패턴:**
-```
-읽기: dirty buffer → 없으면 DB에서 로드
-쓰기: dirty buffer에 기록
-스냅샷: dirty/deleted 깊은 복사
-롤백: 스냅샷 복원
-커밋: dirty/deleted → DB 원자적 배치 쓰기
+```text
+design/tolchain.yaml ── daemok gen ──▶ core/tx_type.gen.go
+                                       events/*.gen.go
+                                       vm/modules/*/register.gen.go   (init에서 핸들러 등록)
+                                       cmd/node/modules.gen.go        (모듈 blank import)
+                                       consensus/produce_block.gen.go (단계 순서, 되돌리기)
+                                       network/apply_block.gen.go
 ```
 
-### 4. `consensus/` (1파일, 182줄): PoA 합의
+## 지켜야 할 규칙
 
-- **라운드로빈:** `validators[height % len(validators)]`로 제안자 결정
-- **블록 생산 순서:** 스냅샷 → 실행 → 상태루트 계산 → 서명 → 블록체인 추가 → 상태 커밋
-- **검증:** 제안자 확인, 서명 검증, TxRoot 확인, height/hash 연속성
-- **실행 루프:** 2초 간격으로 IsProposer 체크
-
-### 5. `vm/` + `vm/modules/` (6파일, 600+줄): 실행 엔진
-
-**vm/registry.go**: 글로벌 핸들러 레지스트리 (싱글톤, init() 자동 등록)
-
-**vm/executor.go**: 트랜잭션 실행기
-- 수수료 선차감 → 논스 검증 → 핸들러 디스패치
-- 실패 시 스냅샷 롤백
-
-**vm/context.go, vm/helpers.go**: 핸들러가 쓰는 `Context`(`Emit`로 이벤트 발행), `DecodePayload`, `RequireOperator`, `ChargeDelegationAmount`
-
-**모듈별 핸들러:**
-
-| 모듈 | 핸들러 | 기능 |
-|------|--------|------|
-| `asset/asset.go` | handleMintAsset | 템플릿 기반 자산 발행. ID = SHA-256(txID+templateID) |
-| | handleBurnAsset | 소유자만 소각. 활성 리스팅 있으면 거부 |
-| | handleTransferAsset | 거래가능+활성리스팅 없는 자산만 전송 |
-| `asset/template.go` | handleRegisterTemplate | 자산 템플릿 등록 (불변) |
-| `economy/token.go` | handleTransfer | 토큰 전송. 오버플로우 체크 |
-| `market/market.go` | handleListMarket | 마켓 등록. ActiveListingID 설정 |
-| | handleBuyMarket | 구매: 자산→구매자, 토큰→판매자 |
-| `session/session.go` | handleSessionOpen | 플레이어 스테이크 잠금, 세션 생성 |
-| | handleSessionResult | 결과 제출(생성자만), 보상 분배 |
-
-### 6. `events/` (1파일, 71줄): 이벤트 시스템
-
-- 이벤트 타입: BlockCommit, TxExecuted, TokenTransfer, Asset*, Template*, Session*, Market*
-- `Emit()`: 동기 호출, 핸들러별 panic recovery
-- core/vm에 의존하지 않음
-
-### 7. `indexer/` (1파일, 143줄): 보조 인덱스
-
-- 이벤트 구독으로 자동 갱신
-- `GetAssetsByOwner(owner)`: 소유자별 자산 ID 목록
-- `GetSessionsByPlayer(player)`: 플레이어별 세션 목록
-- 키: "idx:owner:asset:<owner>" → JSON 배열
-
-### 8. `network/` (3파일, 371줄): P2P 네트워킹
-
-| 파일 | 설명 |
-|------|------|
-| `peer.go` | TCP 연결. 4바이트 길이 접두사 + JSON. 30초 읽기 데드라인, 32MB 제한 |
-| `node.go` | 피어 관리. 최대 50개. Broadcast, 메시지 핸들러 등록. RPC로 받은 tx와 피어에게 처음 받은 tx를 다른 피어에 전달 |
-| `sync.go` | 블록 동기화. 최대 200블록 배치. 실패 시 상태 롤백 |
-
-### 9. `rpc/` (3파일, 330줄): JSON-RPC 서버
-
-**API 메서드:**
-
-| 메서드 | 파라미터 | 반환 |
-|--------|---------|------|
-| `getBlockHeight` | - | 현재 높이 (int64) |
-| `getBlock` | hash 또는 height | Block |
-| `getBalance` | address | {address, balance, nonce} |
-| `getAsset` | id | Asset |
-| `getSession` | id | Session |
-| `getListing` | id | MarketListing |
-| `getAssetsByOwner` | owner | []string |
-| `sendTx` | Transaction | {tx_id} |
-| `getMempoolSize` | - | 개수 (int64) |
-
-- Bearer 토큰 인증 (선택)
-- 1MB 요청 크기 제한
-- `Dispatch()`로 HTTP 없이 직접 테스트 가능
-
-### 10. `wallet/` (2파일, 163줄): 지갑
-
-- `wallet.go`: 키 쌍 래퍼. `NewTx()`, `Transfer()` 헬퍼
-- `keystore.go`: AES-GCM 암호화 + PBKDF2 (100,000회). JSON 포맷 (PubKey, Salt, Nonce, CipherText)
-
-### 11. `config/` (3파일, 207줄): 설정
-
-- `config.go`: JSON 설정 로드/검증. NodeID, 포트, 밸리데이터, TLS, 시드피어
-- `genesis.go`: 제네시스 블록 생성 (초기 잔액 할당, 상태루트 계산)
-- `tls.go`: mTLS 설정 로드 (TLS 1.3, 클라이언트 인증서 필수)
-
-### 12. `cmd/node/` (1파일, 213줄): 진입점
-
-**시작 순서:**
-1. 플래그 파싱 (-config, -key, -genkey, -gencerts)
-2. 설정 로드 → 밸리데이터 키 로드
-3. LevelDB + StateDB 초기화
-4. 블록체인 초기화 (기존 팁 로드 또는 신규)
-5. 제네시스 블록 생성 (신규인 경우)
-6. Emitter, Indexer, Mempool, Executor 생성
-7. PoA 합의 초기화
-8. P2P 노드 시작 + 시드피어 연결 + 동기화
-9. RPC 서버 시작
-10. 합의 루프 실행 (2초 간격)
-11. 시그널 대기 → 그레이스풀 셧다운
-
----
-
-## 의존성 그래프
-
-```
-crypto
-  └──→ core
-         ├──→ storage
-         │      └──→ config
-         ├──→ events
-         │      └──→ indexer
-         └──→ vm
-                └──→ vm/modules (asset, economy, market, session)
-
-consensus ← core, storage, vm, events
-network   ← core, consensus, storage, vm
-rpc       ← core, storage, indexer
-wallet    ← crypto, core
-cmd/node  ← 모든 패키지 조합
-```
-
-**순환 의존성 없음**
-
----
-
-## 핵심 설계 패턴
-
-### 1. 인터페이스 기반 아키텍처
-- `core.State`, `core.BlockStore`, `storage.DB`: 구현체 교체 가능
-- 테스트: MemDB/MemBlockStore, 프로덕션: LevelDB
-
-### 2. Write Buffer + 스냅샷/롤백
-- StateDB가 dirty map + deleted set 유지
-- 중첩 스냅샷 스택으로 트랜잭션 단위 롤백
-- ComputeRoot()는 디스크 + dirty 버퍼 병합
-
-### 3. 플러그형 핸들러 레지스트리
-- `init()`에서 자동 등록 (blank import로 활성화)
-- 새 TxType 추가 시 core 변경 불필요
-
-### 4. 결정론적 상태 루트
-- 모든 키 정렬 → length-prefix 인코딩 → SHA-256
-- 제안자와 검증자가 동일한 루트 계산 보장
-
-### 5. 이벤트 기반 인덱싱
-- Emitter를 통해 비동기 인덱스 갱신
-- panic recovery로 노드 크래시 방지
-
-### 6. 원자적 블록 커밋
-- 스냅샷 → 실행 → 서명 → 블록체인 추가 → 상태 커밋
-- 실패 시 롤백으로 일관성 보장
-
----
-
-## 보안 기능
-
-| 영역 | 구현 |
-|------|------|
-| 서명 | ed25519 (표준 라이브러리) |
-| 해시 | SHA-256 (결정론적 상태루트, 트랜잭션 ID) |
-| P2P 보안 | mTLS (TLS 1.3, 클라이언트 인증서 검증) |
-| 리플레이 방지 | 계정별 Nonce + ChainID 검증 |
-| 키 저장 | AES-GCM + PBKDF2 (100K iterations) |
-| RPC 인증 | Bearer 토큰 (선택적) |
-| 입력 검증 | pubkey 형식, 오버플로우, 타임스탬프 윈도우 |
-| 네트워크 | 30초 데드라인, 32MB 메시지 제한, 50 피어 제한, 1MB RPC 제한 |
-
----
-
-## 트랜잭션 처리 흐름
-
-```
-사용자 Tx 서명
-  → POST /rpc (sendTx)
-    → ChainID 검증 → Mempool 추가
-      → 합의 루프 (2초)
-        → IsProposer? → ProduceBlock
-          → 스냅샷 → ExecuteBlock (순차 실행)
-            → ComputeRoot → Sign → AddBlock → Commit
-              → Broadcast (P2P)
-```
-
----
-
-## 빌드 & 배포
-
-- **Makefile:** `make build`, `make test`, `make vet`, 크로스 컴파일 (darwin-arm64, linux-amd64)
-- **Docker:** Alpine 3.19, 멀티스테이지 빌드 (Go 1.22)
-- **실행 모드:** `-genkey` (키 생성), `-gencerts` (TLS 인증서), 기본 (풀 노드)
+- `*.gen.go`는 손으로 고치지 않습니다. 설계 파일을 고친 뒤 `daemok gen`으로 다시 만들고, `daemok check`로 설계와 import, 생성 파일 최신 여부를 확인합니다.
+- produce_block과 apply_block의 단계 순서, 실패 때 되돌리기, 커밋 지점은 생성된 `RunProduceBlock`·`RunApplyBlock`이 정합니다. 손으로 쓰는 `produce_block.go`·`apply_block.go`에는 단계 본문만 둡니다. commit_state가 실패하면 되돌리지 않고 Fatal로 끝냅니다.
+- 블록 저장(add_block)이 상태 커밋보다 먼저입니다. 그 사이에 노드가 멈추면 시작할 때 `RecoverTipState`가 tip 블록을 다시 실행합니다.
+- 블록 실행 중 이벤트는 Buffer에 모으고 상태 커밋 뒤에만 내보냅니다. 실패한 tx의 이벤트는 버리고 tx_executed만 남깁니다. indexer와 SSE는 커밋된 상태만 봅니다.
+- 실행 결과는 모든 노드에서 같아야 합니다. 핸들러는 벽시계 대신 블록 타임스탬프(위임 만료)와 블록 해시(난수)를 씁니다.
+- 상태 루트는 등록된 접두사의 키를 정렬해 길이 접두사로 이은 SHA-256입니다. 새 상태 접두사는 `storage/statedb.go`의 `registerPrefix`로만 선언합니다. 그래야 상태 루트와 백업에 들어갑니다.
+- 제안자는 실패한 tx를 건너뛰고 블록을 만들지만, 받은 블록은 tx 하나라도 실패하면 거부합니다.
+- tx 타입 하나에 핸들러 하나입니다. 같은 타입을 두 번 등록하면 init에서 panic이 납니다.
+- `vm/modules/` 아래 모듈끼리는 import하지 않습니다. 예외는 설계 파일에 적힌 reward → asset(자산 스키마 검증 재사용) 하나입니다.
+- `tests/testdata/`의 golden 파일은 다른 노드, 디스크, 클라이언트가 의존하는 바이트를 고정합니다. 리팩터링으로 바뀌면 안 되고, 체인 호환을 깨는 의도한 형식 변경일 때만 `-update`로 다시 만듭니다.
+- 세션 동의 메시지(`core.SessionConsentMessage`)는 체인 밖 서명자가 같은 바이트를 재현해야 합니다.
